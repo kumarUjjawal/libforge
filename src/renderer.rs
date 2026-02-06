@@ -126,35 +126,9 @@ where
         };
         surface.configure(&device, &surface_config);
 
-        // Shader (WGSL) - vertex expects NDC coords [-1..1] in pos
-        let shader_src = r#"
-        struct VertexInput {
-            @location(0) pos: vec2<f32>,
-            @location(1) color: vec4<f32>,
-        };
-
-        struct VertexOutput {
-            @builtin(position) position: vec4<f32>,
-            @location(0) v_color: vec4<f32>,
-        };
-
-        @vertex
-        fn vs_main(in: VertexInput) -> VertexOutput {
-            var out: VertexOutput;
-            out.position = vec4<f32>(in.pos, 0.0, 1.0);
-            out.v_color = in.color;
-            return out;
-        }
-
-        @fragment
-        fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-            return in.v_color;
-        }
-        "#;
-
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("basic_shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_src.into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/basic.wgsl").into()),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
