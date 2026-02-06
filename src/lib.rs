@@ -1,3 +1,4 @@
+pub mod error;
 pub mod renderer;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};

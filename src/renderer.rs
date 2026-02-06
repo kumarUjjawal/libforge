@@ -1,16 +1,7 @@
+use crate::error::RendererError;
 use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use thiserror::Error;
 use wgpu::util::DeviceExt;
-
-#[derive(Error, Debug)]
-pub enum RendererError {
-    #[error("wgpu error")]
-    Wgpu(#[from] wgpu::RequestDeviceError),
-
-    #[error("swapchain error: {0}")]
-    Swapchain(String),
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
