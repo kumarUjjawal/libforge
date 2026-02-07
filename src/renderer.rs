@@ -70,7 +70,7 @@ where
         // with a `'static` lifetime while `self.window` keeps the resources alive.
         let surface = instance
             .create_surface(window.clone())
-            .map_err(|_| RendererError::Swapchain("failed to create surface".into()))?;
+            .map_err(|_| RendererError::Surface("failed to create surface".into()))?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -79,7 +79,7 @@ where
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|_| RendererError::Swapchain("no suitable adapter".into()))?;
+            .map_err(|_| RendererError::Surface("no suitable adapter".into()))?;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -245,7 +245,7 @@ where
             Err(e) => {
                 // Try reconfigure then error
                 self.surface.configure(&self.device, &self.surface_config);
-                return Err(RendererError::Swapchain(format!("{:?}", e)));
+                return Err(RendererError::Surface(format!("{:?}", e)));
             }
         };
         let view = output

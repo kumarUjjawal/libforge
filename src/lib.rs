@@ -1,9 +1,9 @@
 pub mod error;
 pub mod renderer;
 
+use error::LibforgeError;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use renderer::Renderer;
-use thiserror::Error;
 
 /// Simple RGBA color
 #[derive(Clone, Copy, Debug)]
@@ -23,16 +23,6 @@ pub struct Rect {
     pub h: f32,
 }
 
-/// Public error type
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("wgpu error: {0}")]
-    Wgpu(String),
-
-    #[error("platform error: {0}")]
-    Platform(String),
-}
-
 /// Public immediate-mode context
 pub struct LibContext<W> {
     renderer: Renderer<W>,
@@ -45,9 +35,8 @@ where
     /// Create a new `LibContext` from any window type that can provide raw window + display handles.
     ///
     /// In examples, this is typically a `winit::window::Window` wrapped in an `Arc`.
-    pub fn new_from_window(window: W) -> Result<Self, Error> {
-        let renderer = pollster::block_on(Renderer::new(window))
-            .map_err(|e| Error::Wgpu(format!("{:?}", e)))?;
+    pub fn new_from_window(window: W) -> Result<Self, LibforgeError> {
+        let renderer = pollster::block_on(Renderer::new(window))?;
         Ok(LibContext { renderer })
     }
 
@@ -62,10 +51,9 @@ where
     }
 
     /// Finish the frame, flush commands to GPU, and present.
-    pub fn end_frame(&mut self) -> Result<(), Error> {
-        self.renderer
-            .end_frame()
-            .map_err(|e| Error::Wgpu(format!("{:?}", e)))
+    pub fn end_frame(&mut self) -> Result<(), LibforgeError> {
+        self.renderer.end_frame()?;
+        Ok(())
     }
 
     /// Handle window resize: pass the new logical size in pixels
