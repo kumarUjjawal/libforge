@@ -1,6 +1,8 @@
 ## libforge
 
-A graphics library which is easy to use and based on some of the best technologies out there. Initial plan is to only support MacOS and iOS and leverage the Apple Metal.
+A graphics library which is easy to use.  Initial plan is to only support MacOS and iOS and leverage the Apple Metal.
+
+![triangle](hello_triangle.png)
 
 ### Here's what we will use
 
@@ -34,5 +36,3 @@ A graphics library which is easy to use and based on some of the best technologi
 7. Event Loop & Timing
 
 8. Resource Management: We will need utilities for managing fonts, textures (ideally cached and RAII style 🥲)
-
-
