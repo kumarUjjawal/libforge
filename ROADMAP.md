@@ -13,7 +13,8 @@ Completed: 07/02/2026
 
 
 Need to do: 
-1. Implement reusable staging buffer
+1. Implement reusable staging buffer [x]
+
 2. Add draw_texture
 
 3. Feature:
@@ -37,4 +38,5 @@ Need to do:
   4.blend mode
 
 5. Add text rendering (fontdue)
+
 6. Add iOS integration via CAMetalLayer

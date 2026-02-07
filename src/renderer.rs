@@ -1,28 +1,6 @@
 use crate::error::RendererError;
-use bytemuck::{Pod, Zeroable};
+use crate::vertex::Vertex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex {
-    pos: [f32; 2],
-    color: [f32; 4],
-}
-
-impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
-        0 => Float32x2, // position
-        1 => Float32x4  // color
-    ];
-
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBUTES,
-        }
-    }
-}
 
 /// Internal renderer storing wgpu objects and a per-frame vertex list.
 ///
@@ -344,9 +322,16 @@ pub(crate) fn rect_to_ndc_coords(rect: crate::Rect, width: u32, height: u32) -> 
     let y0 = 1.0 - (rect.y / h) * 2.0;
 
     let x1 = ((rect.x + rect.w) / w) * 2.0 - 1.0;
-    let y1 = ((rect.y + rect.h) / h) * 2.0;
+    let y1 = 1.0 - ((rect.y + rect.h) / h) * 2.0;
 
-    [x0, y0, x1, y0, x1, y1, x0, y0, x1, y1, x0, y1]
+    [
+        x0, y0, // TL
+        x1, y0, // TR
+        x1, y1, // BR
+        x0, y0, // TL
+        x1, y1, // BR
+        x0, y1, // BL
+    ]
 }
 
 #[cfg(test)]
@@ -370,7 +355,6 @@ mod tests {
 
     #[test]
     fn rect_to_ndc_basic() {
-        // surface 200x100, rect 0,0,200,100 should cover full NDC [-1,1] box
         let rect = crate::Rect {
             x: 0.0,
             y: 0.0,
@@ -378,12 +362,21 @@ mod tests {
             h: 100.0,
         };
         let coords = rect_to_ndc_coords(rect, 200, 100);
-        // corners should be (-1,1), (1,1), (1,-1), (-1,-1) in the correct order
+
+        // top-left
         assert_eq!(coords[0], -1.0);
         assert_eq!(coords[1], 1.0);
+
+        // top-right
         assert_eq!(coords[2], 1.0);
         assert_eq!(coords[3], 1.0);
+
+        // bottom-right
         assert_eq!(coords[4], 1.0);
         assert_eq!(coords[5], -1.0);
+
+        // bottom-left
+        assert_eq!(coords[10], -1.0);
+        assert_eq!(coords[11], -1.0);
     }
 }

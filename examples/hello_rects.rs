@@ -14,7 +14,7 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes()
-            .with_title("libforge - hello_triangle")
+            .with_title("libforge - hello_rects")
             .with_inner_size(PhysicalSize::new(800, 600));
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());

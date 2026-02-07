@@ -1,5 +1,6 @@
 pub mod error;
 pub mod renderer;
+pub mod vertex;
 
 use error::LibforgeError;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};

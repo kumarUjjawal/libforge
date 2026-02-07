@@ -1,4 +1,3 @@
-// tests/gpu_device.rs
 // This test is ignored by default because it requires GPU & platform support.
 // Run locally: `cargo test --test gpu_device -- --ignored --nocapture`
 #[test]
