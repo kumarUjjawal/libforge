@@ -7,10 +7,12 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
+
 struct App {
     window: Option<Arc<Window>>,
     ctx: Option<LibContext<Arc<Window>>>,
 }
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes()
@@ -73,6 +75,9 @@ impl ApplicationHandler for App {
                         },
                         Color([0.2, 0.4, 0.9, 1.0]),
                     );
+
+                    ctx.draw_line(50.0, 50.0, 350.0, 200.0, 4.0, [1.0, 1.0, 0.0, 1.0]);
+                    ctx.draw_line(300.0, 300.0, 600.0, 300.0, 10.0, [0.0, 0.0, 0.0, 1.0]);
                     ctx.end_frame().expect("end_frame failed");
                 }
             }

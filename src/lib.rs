@@ -51,6 +51,19 @@ where
         self.renderer.draw_rect(rect, color);
     }
 
+    /// Immediate draw a line
+    pub fn draw_line(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        thickness: f32,
+        color: [f32; 4],
+    ) {
+        self.renderer.draw_line(x1, y1, x2, y2, thickness, color);
+    }
+
     /// Finish the frame, flush commands to GPU, and present.
     pub fn end_frame(&mut self) -> Result<(), LibforgeError> {
         self.renderer.end_frame()?;

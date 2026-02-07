@@ -236,6 +236,26 @@ where
         self.vertices.extend_from_slice(&vertices);
     }
 
+    /// Draws a line
+    pub fn draw_line(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        thickness: f32,
+        color: [f32; 4],
+    ) {
+        let quad = line_to_quad(x1, y1, x2, y2, thickness);
+        let verts = quad_to_vertices(
+            quad,
+            color,
+            self.surface_config.width as f32,
+            self.surface_config.height as f32,
+        );
+        self.vertices.extend(&verts);
+    }
+
     /// Resize: reconfigure surface
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
@@ -331,6 +351,78 @@ pub(crate) fn rect_to_ndc_coords(rect: crate::Rect, width: u32, height: u32) -> 
         x0, y0, // TL
         x1, y1, // BR
         x0, y1, // BL
+    ]
+}
+
+pub(crate) fn line_to_quad(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32) -> [(f32, f32); 4] {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len = (dx * dx + dy * dy).sqrt().max(0.0001);
+
+    // unit direction
+    let ux = dx / len;
+    let uy = dy / len;
+
+    // perpendicular
+    let px = -uy;
+    let py = ux;
+
+    let half = thickness / 2.0;
+    let hx = px * half;
+    let hy = py * half;
+
+    [
+        (x1 + hx, y1 + hy), // p1
+        (x1 - hx, y1 - hy), // p2
+        (x2 + hx, y2 + hy), // p3
+        (x2 - hx, y2 - hy), // p4
+    ]
+}
+
+pub(crate) fn quad_to_vertices(
+    p: [(f32, f32); 4],
+    color: [f32; 4],
+    width: f32,
+    height: f32,
+) -> [Vertex; 6] {
+    let to_ndc = |x: f32, y: f32| {
+        let w = width as f32;
+        let h = height as f32;
+        let nx = (x / w) * 2.0 - 1.0;
+        let ny = 1.0 - (y / h) * 2.0;
+        (nx, ny)
+    };
+
+    let (x1, y1) = to_ndc(p[0].0, p[0].1);
+    let (x2, y2) = to_ndc(p[1].0, p[1].1);
+    let (x3, y3) = to_ndc(p[2].0, p[2].1);
+    let (x4, y4) = to_ndc(p[3].0, p[3].1);
+
+    [
+        Vertex {
+            pos: [x1, y1],
+            color,
+        },
+        Vertex {
+            pos: [x3, y3],
+            color,
+        },
+        Vertex {
+            pos: [x4, y4],
+            color,
+        },
+        Vertex {
+            pos: [x1, y1],
+            color,
+        },
+        Vertex {
+            pos: [x4, y4],
+            color,
+        },
+        Vertex {
+            pos: [x2, y2],
+            color,
+        },
     ]
 }
 
