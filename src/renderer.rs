@@ -335,3 +335,55 @@ where
         Ok(())
     }
 }
+
+pub(crate) fn rect_to_ndc_coords(rect: crate::Rect, width: u32, height: u32) -> [f32; 12] {
+    let w = width as f32;
+    let h = height as f32;
+
+    let x0 = (rect.x / w) * 2.0 - 1.0;
+    let y0 = 1.0 - (rect.y / h) * 2.0;
+
+    let x1 = ((rect.x + rect.w) / w) * 2.0 - 1.0;
+    let y1 = ((rect.y + rect.h) / h) * 2.0;
+
+    [x0, y0, x1, y0, x1, y1, x0, y0, x1, y1, x0, y1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck;
+    use std::mem::size_of;
+
+    #[test]
+    fn vertex_pod_layout() {
+        // Vertex = [f32;2] + [f32;4] => 2*4 + 4*4 = 8 + 16 = 24 bytes
+        assert_eq!(size_of::<Vertex>(), 24);
+        let v = Vertex {
+            pos: [0.0, 0.0],
+            color: [1.0, 0.0, 0.0, 1.0],
+        };
+        // bytemuck::bytes_of is a compile-time checked cast to &[u8]
+        let b = bytemuck::bytes_of(&v);
+        assert_eq!(b.len(), size_of::<Vertex>());
+    }
+
+    #[test]
+    fn rect_to_ndc_basic() {
+        // surface 200x100, rect 0,0,200,100 should cover full NDC [-1,1] box
+        let rect = crate::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 200.0,
+            h: 100.0,
+        };
+        let coords = rect_to_ndc_coords(rect, 200, 100);
+        // corners should be (-1,1), (1,1), (1,-1), (-1,-1) in the correct order
+        assert_eq!(coords[0], -1.0);
+        assert_eq!(coords[1], 1.0);
+        assert_eq!(coords[2], 1.0);
+        assert_eq!(coords[3], 1.0);
+        assert_eq!(coords[4], 1.0);
+        assert_eq!(coords[5], -1.0);
+    }
+}
