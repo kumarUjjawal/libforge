@@ -1,7 +1,6 @@
 use crate::error::RendererError;
 use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -49,6 +48,9 @@ pub struct Renderer<W> {
     // per-frame collected vertices
     vertices: Vec<Vertex>,
 
+    vertex_buffer: wgpu::Buffer,
+    // number of vertices capacity
+    vertex_capacity: usize,
     // current clear color stored in begin_frame
     clear_color: Option<[f32; 4]>,
 }
@@ -89,6 +91,15 @@ where
                 ..Default::default()
             })
             .await?;
+
+        let initial_capacity = 4096;
+
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("libforge_vertex_buffer"),
+            size: (initial_capacity * std::mem::size_of::<Vertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         // Choose a surface format
         let caps = surface.get_capabilities(&adapter);
@@ -172,8 +183,28 @@ where
             surface_config,
             pipeline,
             vertices: Vec::with_capacity(1024),
+            vertex_buffer,
             clear_color: None,
+            vertex_capacity: initial_capacity,
         })
+    }
+
+    pub fn ensure_vertex_capacity(&mut self, needed: usize) {
+        if needed <= self.vertex_capacity {
+            return;
+        }
+
+        let new_capacity = needed.next_power_of_two();
+        let new_size = (new_capacity * std::mem::size_of::<Vertex>()) as u64;
+
+        self.vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("libforge_vertex_buffer"),
+            size: new_size,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        self.vertex_capacity = new_capacity;
     }
 
     /// Called each frame to reset the command list and optionally set clear color
@@ -253,14 +284,11 @@ where
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         // create vertex buffer (init with data)
-        let vertex_data = bytemuck::cast_slice(&self.vertices);
-        let vertex_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("vertex_buffer"),
-                contents: vertex_data,
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let needed = self.vertices.len();
+        self.ensure_vertex_capacity(needed);
+
+        self.queue
+            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
 
         // encoder
         let mut encoder = self
@@ -294,7 +322,7 @@ where
 
             rpass.set_pipeline(&self.pipeline);
             if !self.vertices.is_empty() {
-                rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 let vertex_count = self.vertices.len() as u32;
                 rpass.draw(0..vertex_count, 0..1);
             }
