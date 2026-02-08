@@ -129,7 +129,7 @@ where
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some("fs_color"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -209,26 +209,32 @@ where
         let vertices = [
             Vertex {
                 pos: [x0, y0],
+                uv: [0.0, 0.0],
                 color: c,
             },
             Vertex {
                 pos: [x1, y0],
+                uv: [0.0, 0.0],
                 color: c,
             },
             Vertex {
                 pos: [x1, y1],
+                uv: [0.0, 0.0],
                 color: c,
             },
             Vertex {
                 pos: [x0, y0],
+                uv: [0.0, 0.0],
                 color: c,
             },
             Vertex {
                 pos: [x1, y1],
+                uv: [0.0, 0.0],
                 color: c,
             },
             Vertex {
                 pos: [x0, y1],
+                uv: [0.0, 0.0],
                 color: c,
             },
         ];
@@ -353,7 +359,6 @@ where
         Ok(())
     }
 }
-
 pub(crate) fn rect_to_ndc_coords(rect: crate::Rect, width: u32, height: u32) -> [f32; 12] {
     let w = width as f32;
     let h = height as f32;
@@ -440,14 +445,19 @@ pub(crate) fn circle_to_vertices(
 
         verts.push(Vertex {
             pos: [cx_ndc, cy_ndc],
+            uv: [0.0, 0.0],
             color,
         });
         verts.push(Vertex {
             pos: [x0_ndc, y0_ndc],
+
+            uv: [0.0, 0.0],
             color,
         });
         verts.push(Vertex {
             pos: [x1_ndc, y1_ndc],
+
+            uv: [0.0, 0.0],
             color,
         });
     }
@@ -476,26 +486,34 @@ pub(crate) fn quad_to_vertices(
     [
         Vertex {
             pos: [x1, y1],
+
+            uv: [0.0, 0.0],
             color,
         },
         Vertex {
             pos: [x3, y3],
+
+            uv: [0.0, 0.0],
             color,
         },
         Vertex {
             pos: [x4, y4],
+            uv: [0.0, 0.0],
             color,
         },
         Vertex {
             pos: [x1, y1],
+            uv: [0.0, 0.0],
             color,
         },
         Vertex {
             pos: [x4, y4],
+            uv: [0.0, 0.0],
             color,
         },
         Vertex {
             pos: [x2, y2],
+            uv: [0.0, 0.0],
             color,
         },
     ]
@@ -513,6 +531,7 @@ mod tests {
         assert_eq!(size_of::<Vertex>(), 24);
         let v = Vertex {
             pos: [0.0, 0.0],
+            uv: [0.0, 0.0],
             color: [1.0, 0.0, 0.0, 1.0],
         };
         // bytemuck::bytes_of is a compile-time checked cast to &[u8]
@@ -545,5 +564,27 @@ mod tests {
         // bottom-left
         assert_eq!(coords[10], -1.0);
         assert_eq!(coords[11], -1.0);
+    }
+
+    #[test]
+    fn circle_vertex_count_and_basic_positions() {
+        // small segments count for deterministic test
+        let seg = 4;
+        let cx = 50.0f32;
+        let cy = 40.0f32;
+        let radius = 10.0f32;
+        let color = [1.0, 0.0, 0.0, 1.0];
+        let width = 200u32;
+        let height = 100u32;
+
+        let verts = crate::renderer::circle_to_vertices(cx, cy, radius, seg, color, width, height);
+        // for seg triangles, we expect seg * 3 vertices
+        assert_eq!(verts.len(), seg * 3);
+
+        // center of first triangle should be center in NDC
+        let center_ndc_x = (cx / width as f32) * 2.0 - 1.0;
+        let center_ndc_y = 1.0 - (cy / height as f32) * 2.0;
+        assert!((verts[0].pos[0] - center_ndc_x).abs() < 1e-6);
+        assert!((verts[0].pos[1] - center_ndc_y).abs() < 1e-6);
     }
 }

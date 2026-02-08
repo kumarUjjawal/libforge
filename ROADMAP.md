@@ -40,3 +40,5 @@ Need to do:
 5. Add text rendering (fontdue)
 
 6. Add iOS integration via CAMetalLayer
+
+7. Draw circle [x]
