@@ -348,7 +348,15 @@ where
             },
         ];
 
+        let start = self.vertices.len();
         self.vertices.extend_from_slice(&vertices);
+        match self.commands.last_mut() {
+            Some(DrawCommand::Color { count, .. }) => *count += vertices.len(),
+            _ => self.commands.push(DrawCommand::Color {
+                start,
+                count: vertices.len(),
+            }),
+        }
     }
 
     /// Draws a line
@@ -368,7 +376,15 @@ where
             self.surface_config.width as f32,
             self.surface_config.height as f32,
         );
+        let start = self.vertices.len();
         self.vertices.extend(&verts);
+        match self.commands.last_mut() {
+            Some(DrawCommand::Color { count, .. }) => *count += verts.len(),
+            _ => self.commands.push(DrawCommand::Color {
+                start,
+                count: verts.len(),
+            }),
+        }
     }
 
     /// Draws a circle
@@ -388,7 +404,15 @@ where
         if needed_total > self.vertex_capacity {
             self.ensure_vertex_capacity(needed_total);
         }
+        let start = self.vertices.len();
         self.vertices.extend_from_slice(&verts);
+        match self.commands.last_mut() {
+            Some(DrawCommand::Color { count, .. }) => *count += verts.len(),
+            _ => self.commands.push(DrawCommand::Color {
+                start,
+                count: verts.len(),
+            }),
+        }
     }
 
     pub fn draw_texture(&mut self, id: TextureId, dest: crate::Rect, tint: [f32; 4]) {
