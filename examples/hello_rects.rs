@@ -76,8 +76,37 @@ impl ApplicationHandler for App {
                         Color([0.2, 0.4, 0.9, 1.0]),
                     );
 
-                    ctx.draw_line(50.0, 50.0, 350.0, 200.0, 4.0, [1.0, 1.0, 0.0, 1.0]);
-                    ctx.draw_line(300.0, 300.0, 600.0, 300.0, 10.0, [0.0, 0.0, 0.0, 1.0]);
+                    ctx.draw_line(
+                        50.0,
+                        50.0,
+                        350.0,
+                        200.0,
+                        4.0,
+                        libforge::Color([1.0, 1.0, 0.0, 1.0]),
+                    );
+                    ctx.draw_line(
+                        300.0,
+                        300.0,
+                        600.0,
+                        300.0,
+                        10.0,
+                        libforge::Color([0.0, 0.0, 0.0, 1.0]),
+                    );
+
+                    ctx.draw_circle(
+                        200.0,
+                        150.0,
+                        30.0,
+                        24,
+                        libforge::Color([1.0, 0.5, 0.2, 1.0]),
+                    );
+                    ctx.draw_circle(
+                        400.0,
+                        150.0,
+                        50.0,
+                        64,
+                        libforge::Color([0.2, 0.6, 1.0, 1.0]),
+                    );
                     ctx.end_frame().expect("end_frame failed");
                 }
             }

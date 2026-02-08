@@ -52,16 +52,14 @@ where
     }
 
     /// Immediate draw a line
-    pub fn draw_line(
-        &mut self,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-        thickness: f32,
-        color: [f32; 4],
-    ) {
-        self.renderer.draw_line(x1, y1, x2, y2, thickness, color);
+    pub fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: Color) {
+        self.renderer.draw_line(x1, y1, x2, y2, thickness, color.0);
+    }
+
+    /// Draw a filled circle centered at (x, y) with given radius (in logical pixels).
+    /// `segments` controls the tessellation (higher = smoother). Use ~32 for good quality.
+    pub fn draw_circle(&mut self, x: f32, y: f32, radius: f32, segments: usize, color: Color) {
+        self.renderer.draw_circle(x, y, radius, segments, color.0);
     }
 
     /// Finish the frame, flush commands to GPU, and present.

@@ -256,6 +256,26 @@ where
         self.vertices.extend(&verts);
     }
 
+    /// Draws a circle
+    pub fn draw_circle(&mut self, x: f32, y: f32, radius: f32, segments: usize, color: [f32; 4]) {
+        let verts = circle_to_vertices(
+            x,
+            y,
+            radius,
+            segments,
+            color,
+            self.surface_config.width as u32,
+            self.surface_config.height as u32,
+        );
+
+        // ensure capacity
+        let needed_total = self.vertices.len() + verts.len();
+        if needed_total > self.vertex_capacity {
+            self.ensure_vertex_capacity(needed_total);
+        }
+        self.vertices.extend_from_slice(&verts);
+    }
+
     /// Resize: reconfigure surface
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
@@ -377,6 +397,61 @@ pub(crate) fn line_to_quad(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32) -
         (x2 + hx, y2 + hy), // p3
         (x2 - hx, y2 - hy), // p4
     ]
+}
+
+pub(crate) fn circle_to_vertices(
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    segments: usize,
+    color: [f32; 4],
+    width: u32,
+    height: u32,
+) -> Vec<Vertex> {
+    let mut verts = Vec::with_capacity(segments * 3);
+
+    // convert pixel coords -> NDC
+    let to_ndc = |x: f32, y: f32| {
+        let w = width as f32;
+        let h = height as f32;
+        let nx = (x / w) * 2.0 - 1.0;
+        let ny = 1.0 - (y / h) * 2.0;
+        (nx, ny)
+    };
+
+    let (cx_ndc, cy_ndc) = to_ndc(cx, cy);
+
+    let seg = std::cmp::max(2, segments);
+    let two_pi = std::f32::consts::TAU;
+    let angle_step = two_pi / seg as f32;
+
+    for i in 0..seg {
+        let a0 = i as f32 * angle_step;
+        let a1 = ((i + 1) % seg) as f32 * angle_step;
+
+        let x0 = cx + a0.cos() * radius;
+        let y0 = cy + a0.sin() * radius;
+
+        let x1 = cx + a1.cos() * radius;
+        let y1 = cy + a1.sin() * radius;
+
+        let (x0_ndc, y0_ndc) = to_ndc(x0, y0);
+        let (x1_ndc, y1_ndc) = to_ndc(x1, y1);
+
+        verts.push(Vertex {
+            pos: [cx_ndc, cy_ndc],
+            color,
+        });
+        verts.push(Vertex {
+            pos: [x0_ndc, y0_ndc],
+            color,
+        });
+        verts.push(Vertex {
+            pos: [x1_ndc, y1_ndc],
+            color,
+        });
+    }
+    verts
 }
 
 pub(crate) fn quad_to_vertices(
