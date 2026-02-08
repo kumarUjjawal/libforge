@@ -2,7 +2,8 @@
 
 A graphics library which is easy to use.  Initial plan is to only support MacOS and iOS and leverage the Apple Metal.
 
-![triangle](hello_triangle.png)
+<video src="mixed_rendering.mov" controls="controls" muted="muted" style="max-width: 100%;">
+</video>
 
 ### Here's what we will use
 
