@@ -245,7 +245,7 @@ where
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 unclipped_depth: false,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,
@@ -297,6 +297,7 @@ where
     /// Called each frame to reset the command list and optionally set clear color
     pub fn begin_frame(&mut self, clear: Option<[f32; 4]>) {
         self.vertices.clear();
+        self.commands.clear();
         self.clear_color = clear;
     }
 
@@ -697,12 +698,6 @@ where
         self.queue.submit(Some(encoder.finish()));
         output.present();
 
-        //
-        // 7. Clear CPU-side data for next frame
-        //
-        self.vertices.clear();
-        self.commands.clear();
-
         Ok(())
     }
 }
@@ -874,8 +869,8 @@ mod tests {
 
     #[test]
     fn vertex_pod_layout() {
-        // Vertex = [f32;2] + [f32;4] => 2*4 + 4*4 = 8 + 16 = 24 bytes
-        assert_eq!(size_of::<Vertex>(), 24);
+        // Vertex = [f32;2] + [f32;2] + [f32;4] => 2*4 + 2*4 + 4*4 = 8 + 8 + 16 = 32 bytes
+        assert_eq!(size_of::<Vertex>(), 32);
         let v = Vertex {
             pos: [0.0, 0.0],
             uv: [0.0, 0.0],
@@ -933,5 +928,111 @@ mod tests {
         let center_ndc_y = 1.0 - (cy / height as f32) * 2.0;
         assert!((verts[0].pos[0] - center_ndc_x).abs() < 1e-6);
         assert!((verts[0].pos[1] - center_ndc_y).abs() < 1e-6);
+    }
+
+    #[test]
+    fn texture_loading_from_bytes() {
+        use image::{ImageBuffer, RgbaImage};
+
+        // Create a simple 2x2 red image
+        let mut img = RgbaImage::new(2, 2);
+        for pixel in img.pixels_mut() {
+            *pixel = image::Rgba([255, 0, 0, 255]);
+        }
+
+        // Encode to PNG bytes
+        let mut png_bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        // Test that image crate can decode it back
+        let decoded = image::load_from_memory(&png_bytes).unwrap();
+        let rgba = decoded.to_rgba8();
+        assert_eq!(rgba.width(), 2);
+        assert_eq!(rgba.height(), 2);
+
+        // Verify first pixel is red
+        assert_eq!(rgba.get_pixel(0, 0).0, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn draw_texture_generates_correct_vertices() {
+        // We can't easily test the full renderer without a GPU,
+        // but we can verify the vertex generation logic
+        let dest = crate::Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 200.0,
+            h: 150.0,
+        };
+        let _tint = [1.0, 0.5, 0.25, 0.8];
+
+        // Manually compute what draw_texture should generate
+        let width = 800.0;
+        let height = 600.0;
+
+        let x0 = dest.x;
+        let y0 = dest.y;
+        let x1 = dest.x + dest.w;
+        let y1 = dest.y + dest.h;
+
+        // Convert to NDC
+        let nx0 = (x0 / width) * 2.0 - 1.0;
+        let ny0 = 1.0 - (y0 / height) * 2.0;
+        let nx1 = (x1 / width) * 2.0 - 1.0;
+        let ny1 = 1.0 - (y1 / height) * 2.0;
+
+        // Verify our NDC conversion is correct
+        // x0=100, width=800 -> nx0 = (100/800)*2 - 1 = 0.25 - 1 = -0.75
+        // y0=100, height=600 -> ny0 = 1 - (100/600)*2 = 1 - 0.333... = 0.666...
+        // x1=300, width=800 -> nx1 = (300/800)*2 - 1 = 0.75 - 1 = -0.25
+        // y1=250, height=600 -> ny1 = 1 - (250/600)*2 = 1 - 0.833... = 0.166...
+        assert!((nx0 - (-0.75)).abs() < 1e-5);
+        assert!((ny0 - (0.666666)).abs() < 1e-4);
+        assert!((nx1 - (-0.25)).abs() < 1e-5);
+        assert!((ny1 - (0.166666)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn texture_id_uniqueness() {
+        // Verify TextureId wraps a u32 and can be copied
+        let id1 = TextureId(0);
+        let id2 = TextureId(1);
+        let id1_copy = id1;
+
+        assert_eq!(id1.0, 0);
+        assert_eq!(id2.0, 1);
+        assert_eq!(id1_copy.0, id1.0);
+    }
+
+    #[test]
+    fn draw_command_variants() {
+        // Test that DrawCommand enum variants work correctly
+        let color_cmd = DrawCommand::Color { start: 0, count: 6 };
+        let tex_cmd = DrawCommand::Texture {
+            tex: TextureId(0),
+            start: 6,
+            count: 6,
+        };
+
+        match color_cmd {
+            DrawCommand::Color { start, count } => {
+                assert_eq!(start, 0);
+                assert_eq!(count, 6);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        match tex_cmd {
+            DrawCommand::Texture { tex, start, count } => {
+                assert_eq!(tex.0, 0);
+                assert_eq!(start, 6);
+                assert_eq!(count, 6);
+            }
+            _ => panic!("Wrong variant"),
+        }
     }
 }

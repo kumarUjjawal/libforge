@@ -17,20 +17,24 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes()
-            .with_title("libforge - hello_texture")
+            .with_title("libforge - simple_texture")
             .with_inner_size(PhysicalSize::new(1024, 768));
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
-        
-        let mut ctx = LibContext::new_from_window(window).unwrap();
-        
-        // Load texture once at startup
+
+        // Create context and load texture once
+        let mut ctx = LibContext::new_from_window(window.clone()).unwrap();
+
         let bytes = include_bytes!("tennis-clay-court.png");
-        let tex = ctx.load_texture_from_bytes("tennis_court", bytes)
+        let tex = ctx
+            .load_texture_from_bytes("tennis_court", bytes)
             .expect("Failed to load texture");
-        
+
         self.texture = Some(tex);
         self.ctx = Some(ctx);
+
+        // Request initial redraw
+        window.request_redraw();
     }
 
     fn window_event(
@@ -56,16 +60,16 @@ impl ApplicationHandler for App {
                     if let Some(tex) = self.texture {
                         ctx.begin_frame(Some(Color([0.1, 0.1, 0.15, 1.0])));
 
-                        // Draw texture filling most of the window
+                        // Draw the texture
                         ctx.draw_texture(
                             tex,
                             Rect {
-                                x: 50.0,
-                                y: 50.0,
-                                w: 924.0,
-                                h: 668.0,
+                                x: 100.0,
+                                y: 100.0,
+                                w: 800.0,
+                                h: 533.0, // Maintain 1536:1024 aspect ratio (3:2)
                             },
-                            Color([1.0, 1.0, 1.0, 1.0]), // white tint (no modification)
+                            Color([1.0, 1.0, 1.0, 1.0]), // white = no tint
                         );
 
                         ctx.end_frame().expect("end_frame failed");
