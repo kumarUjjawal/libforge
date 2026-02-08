@@ -2,8 +2,9 @@
 
 A graphics library which is easy to use.  Initial plan is to only support MacOS and iOS and leverage the Apple Metal.
 
-<video src="mixed_rendering.mov" controls="controls" muted="muted" style="max-width: 100%;">
-</video>
+<p align="center">
+  <img src="mixed_rendering.gif" alt="mixed" />
+</p>
 
 ### Here's what we will use
 
