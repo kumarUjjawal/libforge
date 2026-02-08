@@ -31,6 +31,43 @@ pub struct Renderer<W> {
     vertex_capacity: usize,
     // current clear color stored in begin_frame
     clear_color: Option<[f32; 4]>,
+
+    // Draw commands (so we know which pipeline to bind per batch)
+    pub commands: Vec<DrawCommand>,
+
+    // texture manager
+    pub texture: std::collections::HashMap<u32, Texture>,
+    pub next_texture_id: u32,
+
+    // bind group layout
+    pub tex_bind_group_layout: wgpu::BindGroupLayout,
+
+    // pipeline
+    pub texture_pipeline: wgpu::RenderPipeline,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TextureId(pub u32);
+
+pub enum DrawCommand {
+    Color {
+        start: usize,
+        count: usize,
+    },
+    Texture {
+        tex: TextureId,
+        start: usize,
+        count: usize,
+    },
+}
+
+pub struct Texture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+    bind_group: wgpu::BindGroup,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl<W> Renderer<W>
@@ -151,6 +188,73 @@ where
             multiview: None,
         });
 
+        // create texture bind group layout: binding 0 = texture, binding 1 = sampler
+        let tex_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        // Create a pipeline layout that includes the tex bind group layout
+        let texture_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("texture_pipeline_layout"),
+                bind_group_layouts: &[&tex_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        // re-use the same shader module but provide a different fragment entry point (see WGSL below)
+        let texture_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("texture_pipeline"),
+            layout: Some(&texture_pipeline_layout),
+            cache: None,
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_texture"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
         Ok(Self {
             _window: window,
             _instance: instance,
@@ -164,6 +268,11 @@ where
             vertex_buffer,
             clear_color: None,
             vertex_capacity: initial_capacity,
+            texture: std::collections::HashMap::new(),
+            next_texture_id: 0,
+            tex_bind_group_layout,
+            commands: Vec::new(),
+            texture_pipeline,
         })
     }
 
@@ -282,6 +391,170 @@ where
         self.vertices.extend_from_slice(&verts);
     }
 
+    pub fn draw_texture(&mut self, id: TextureId, dest: crate::Rect, tint: [f32; 4]) {
+        // compute vertices (positions + uvs)
+        let x0 = dest.x;
+        let y0 = dest.y;
+        let x1 = dest.x + dest.w;
+        let y1 = dest.y + dest.h;
+
+        // UV coordinates: (0,0) top-left, (1,1) bottom-right
+        let u0 = 0.0f32;
+        let v0 = 0.0f32;
+        let u1 = 1.0f32;
+        let v1 = 1.0f32;
+
+        // convert to NDC and pack Vertex with uv
+        let to_ndc = |x: f32, y: f32| {
+            let w = self.surface_config.width as f32;
+            let h = self.surface_config.height as f32;
+            let nx = (x / w) * 2.0 - 1.0;
+            let ny = 1.0 - (y / h) * 2.0;
+            (nx, ny)
+        };
+
+        let (nx0, ny0) = to_ndc(x0, y0);
+        let (nx1, ny1) = to_ndc(x1, y1);
+
+        // Quad: p0 = (nx0, ny0) TL, p1 = (nx1, ny0) TR, p2 = (nx1, ny1) BR, p3 = (nx0, ny1) BL
+        let start = self.vertices.len();
+
+        let verts = [
+            Vertex {
+                pos: [nx0, ny0],
+                uv: [u0, v0],
+                color: tint,
+            },
+            Vertex {
+                pos: [nx1, ny0],
+                uv: [u1, v0],
+                color: tint,
+            },
+            Vertex {
+                pos: [nx1, ny1],
+                uv: [u1, v1],
+                color: tint,
+            },
+            Vertex {
+                pos: [nx0, ny0],
+                uv: [u0, v0],
+                color: tint,
+            },
+            Vertex {
+                pos: [nx1, ny1],
+                uv: [u1, v1],
+                color: tint,
+            },
+            Vertex {
+                pos: [nx0, ny1],
+                uv: [u0, v1],
+                color: tint,
+            },
+        ];
+
+        // ensure capacity for new vertices
+        let needed_total = self.vertices.len() + verts.len();
+        self.ensure_vertex_capacity(needed_total);
+
+        self.vertices.extend_from_slice(&verts);
+        self.commands.push(DrawCommand::Texture {
+            tex: id,
+            start,
+            count: verts.len(),
+        });
+    }
+
+    pub fn load_texture_from_bytes(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<TextureId, RendererError> {
+        // decode with image crate
+        let img = image::load_from_memory(bytes)
+            .map_err(|e| RendererError::Internal(format!("{:?}", e)))?;
+        let rgba = img.to_rgba8();
+        let (width, height) = (rgba.width(), rgba.height());
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(name),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        // upload data
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            size,
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("libforge_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        // create bind group
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.tex_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+            label: Some("texture_bind_group"),
+        });
+
+        let id = {
+            let id = self.next_texture_id;
+            self.next_texture_id += 1;
+            id
+        };
+
+        self.texture.insert(
+            id,
+            Texture {
+                texture,
+                view,
+                sampler,
+                bind_group,
+                width,
+                height,
+            },
+        );
+        Ok(TextureId(id))
+    }
     /// Resize: reconfigure surface
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
@@ -294,67 +567,117 @@ where
 
     /// End frame: create buffers, record commands, submit, and present.
     pub fn end_frame(&mut self) -> Result<(), RendererError> {
-        // acquire next texture
+        //
+        //  Acquire next surface texture
+        //
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(e) => {
-                // Try reconfigure then error
+                // Try to recover by reconfiguring
                 self.surface.configure(&self.device, &self.surface_config);
                 return Err(RendererError::Surface(format!("{:?}", e)));
             }
         };
+
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // create vertex buffer (init with data)
+        //
+        //  Upload vertices to persistent GPU buffer
+        //
         let needed = self.vertices.len();
         self.ensure_vertex_capacity(needed);
 
-        self.queue
-            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+        if needed > 0 {
+            self.queue
+                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+        }
 
-        // encoder
+        //
+        //  Begin command encoder + render pass
+        //
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("command_encoder"),
             });
 
-        {
-            let clear = self.clear_color.unwrap_or([0.1, 0.1, 0.1, 1.0]);
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("render_pass"),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear[0] as f64,
-                            g: clear[1] as f64,
-                            b: clear[2] as f64,
-                            a: clear[3] as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-            });
+        let clear = self.clear_color.unwrap_or([0.1, 0.1, 0.1, 1.0]);
 
-            rpass.set_pipeline(&self.pipeline);
-            if !self.vertices.is_empty() {
-                rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                let vertex_count = self.vertices.len() as u32;
-                rpass.draw(0..vertex_count, 0..1);
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("render_pass"),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: clear[0] as f64,
+                        g: clear[1] as f64,
+                        b: clear[2] as f64,
+                        a: clear[3] as f64,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+        });
+
+        //
+        //  Bind vertex buffer
+        //
+        if !self.vertices.is_empty() {
+            rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        }
+
+        //
+        //  Replay draw commands
+        //
+        for cmd in &self.commands {
+            match *cmd {
+                DrawCommand::Color { start, count } => {
+                    rpass.set_pipeline(&self.pipeline); // solid color pipeline
+
+                    let s = start as u32;
+                    let e = s + count as u32;
+
+                    rpass.draw(s..e, 0..1);
+                }
+
+                DrawCommand::Texture { tex, start, count } => {
+                    rpass.set_pipeline(&self.texture_pipeline); // textured pipeline
+
+                    if let Some(texdata) = self.texture.get(&tex.0) {
+                        rpass.set_bind_group(0, &texdata.bind_group, &[]);
+                    } else {
+                        // Texture missing; skip draw instead of crashing
+                        continue;
+                    }
+
+                    let s = start as u32;
+                    let e = s + count as u32;
+
+                    rpass.draw(s..e, 0..1);
+                }
             }
         }
 
-        // submit
+        drop(rpass); // drop borrow before submit
+
+        //
+        // Submit GPU commands + present frame
+        //
         self.queue.submit(Some(encoder.finish()));
         output.present();
+
+        //
+        // 7. Clear CPU-side data for next frame
+        //
+        self.vertices.clear();
+        self.commands.clear();
 
         Ok(())
     }

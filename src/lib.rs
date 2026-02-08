@@ -2,6 +2,7 @@ pub mod error;
 pub mod renderer;
 pub mod vertex;
 
+pub use crate::renderer::TextureId;
 use error::LibforgeError;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use renderer::Renderer;
@@ -60,6 +61,18 @@ where
     /// `segments` controls the tessellation (higher = smoother). Use ~32 for good quality.
     pub fn draw_circle(&mut self, x: f32, y: f32, radius: f32, segments: usize, color: Color) {
         self.renderer.draw_circle(x, y, radius, segments, color.0);
+    }
+
+    pub fn draw_texture(&mut self, tex: TextureId, rect: Rect, tint: Color) {
+        self.renderer.draw_texture(tex, rect, tint.0);
+    }
+
+    pub fn load_texture_from_bytes(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<TextureId, LibforgeError> {
+        Ok(self.renderer.load_texture_from_bytes(name, bytes)?)
     }
 
     /// Finish the frame, flush commands to GPU, and present.
