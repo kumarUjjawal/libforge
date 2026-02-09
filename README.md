@@ -3,7 +3,7 @@
 A graphics library which is easy to use.  Initial plan is to only support MacOS and iOS and leverage the Apple Metal.
 
 <p align="center">
-  <img src="mixed_rendering.gif" alt="mixed" />
+  <img src="tennis-game.gif" alt="mixed" />
 </p>
 
 ### Here's what we will use
