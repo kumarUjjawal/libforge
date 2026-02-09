@@ -489,6 +489,82 @@ where
         });
     }
 
+    pub fn draw_subtexture(
+        &mut self,
+        tex: TextureId,
+        src: crate::Rect,
+        dst: crate::Rect,
+        tint: [f32; 4],
+    ) {
+        let texdata = match self.texture.get(&tex.0) {
+            Some(t) => t,
+            None => return,
+        };
+
+        // --- Compute normalized UVs from pixel-space source rect ---
+        let u0 = src.x / texdata.width as f32;
+        let v0 = src.y / texdata.height as f32;
+        let u1 = (src.x + src.w) / texdata.width as f32;
+        let v1 = (src.y + src.h) / texdata.height as f32;
+
+        // convert dst to ndc
+        let to_ndc = |x: f32, y: f32| {
+            let w = self.surface_config.width as f32;
+            let h = self.surface_config.height as f32;
+            let nx = (x / w) * 2.0 - 1.0;
+            let ny = 1.0 - (y / h) * 2.0;
+            (nx, ny)
+        };
+
+        let (x0, y0) = to_ndc(dst.x, dst.y);
+        let (x1, y1) = to_ndc(dst.x + dst.w, dst.y + dst.h);
+
+        let start = self.vertices.len();
+
+        let verts = [
+            Vertex {
+                pos: [x0, y0],
+                uv: [u0, v0],
+                color: tint,
+            },
+            Vertex {
+                pos: [x1, y0],
+                uv: [u1, v0],
+                color: tint,
+            },
+            Vertex {
+                pos: [x1, y1],
+                uv: [u1, v1],
+                color: tint,
+            },
+            Vertex {
+                pos: [x0, y0],
+                uv: [u0, v0],
+                color: tint,
+            },
+            Vertex {
+                pos: [x1, y1],
+                uv: [u1, v1],
+                color: tint,
+            },
+            Vertex {
+                pos: [x0, y1],
+                uv: [u0, v1],
+                color: tint,
+            },
+        ];
+
+        let needed_total = start + verts.len();
+        self.ensure_vertex_capacity(needed_total);
+        self.vertices.extend_from_slice(&verts);
+
+        self.commands.push(DrawCommand::Texture {
+            tex,
+            start,
+            count: verts.len(),
+        });
+    }
+
     pub fn load_texture_from_bytes(
         &mut self,
         name: &str,

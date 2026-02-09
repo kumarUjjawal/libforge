@@ -67,6 +67,10 @@ where
         self.renderer.draw_texture(tex, rect, tint.0);
     }
 
+    pub fn draw_subtexture(&mut self, tex: TextureId, src: Rect, dst: Rect, tint: Color) {
+        self.renderer.draw_subtexture(tex, src, dst, tint.0);
+    }
+
     pub fn load_texture_from_bytes(
         &mut self,
         name: &str,
