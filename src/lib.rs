@@ -1,8 +1,10 @@
 pub mod error;
 pub mod renderer;
+pub mod sprite_animation;
 pub mod vertex;
 
 pub use crate::renderer::TextureId;
+use crate::sprite_animation::SpriteAnimation;
 use error::LibforgeError;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use renderer::Renderer;
@@ -69,6 +71,18 @@ where
 
     pub fn draw_subtexture(&mut self, tex: TextureId, src: Rect, dst: Rect, tint: Color) {
         self.renderer.draw_subtexture(tex, src, dst, tint.0);
+    }
+
+    pub fn draw_sprite_animation(
+        &mut self,
+        tex: TextureId,
+        animation: &SpriteAnimation,
+        time: f32,
+        destination: Rect,
+        tint: Color,
+    ) {
+        let src = animation.frame_at_time(time);
+        self.renderer.draw_subtexture(tex, src, destination, tint.0);
     }
 
     pub fn load_texture_from_bytes(
