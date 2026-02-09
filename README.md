@@ -36,7 +36,6 @@
 -  **Color Tinting**: Modify texture colors on the fly
 -  **Immediate Mode**: No complex state management
 
----
 
 ## Basic Example
 
@@ -82,7 +81,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
----
 
 ## Build
 
@@ -94,7 +92,6 @@ cargo build
 cargo build --release
 ```
 
----
 
 ## Run Tests
 
@@ -109,7 +106,6 @@ cargo test -- --nocapture
 cargo test texture_loading
 ```
 
----
 
 ## Run Examples
 
@@ -124,7 +120,6 @@ cargo run --example tennis_game
 cargo run --example simple_texture
 ```
 
----
 
 ## More Examples
 
@@ -144,7 +139,6 @@ Explore all examples in the [`examples/`](examples/) directory:
 - [`tennis_game.rs`](examples/tennis_game.rs) - **Fully playable tennis game!** (keyboard controls, AI, physics)
 - [`bouncing_shapes.rs`](examples/bouncing_shapes.rs) - Physics simulation with collision detection
 
----
 
 ## Technology Stack
 
@@ -154,7 +148,6 @@ Explore all examples in the [`examples/`](examples/) directory:
 - **[glam](https://github.com/bitshifter/glam-rs)** - Math library
 - **WGSL** - WebGPU Shading Language (automatically compiled to platform shaders)
 
----
 
 ## Platform Support
 
@@ -167,7 +160,6 @@ Explore all examples in the [`examples/`](examples/) directory:
 | Android  | Vulkan  |  Untested |
 | Web      | WebGPU/WebGL |  Untested|
 
----
 
 ## License
 
