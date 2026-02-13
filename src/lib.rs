@@ -117,6 +117,27 @@ where
             .set_transform_2d_model(tx, ty, rotation_radian, sx, sy);
     }
 
+    /// Camera
+    pub fn set_camera(&mut self, camera: Camera2D) {
+        self.renderer.set_camera(camera);
+    }
+
+    pub fn set_camera_position(&mut self, x: f32, y: f32) {
+        self.renderer.set_camera_position(x, y);
+    }
+
+    pub fn translate_camera(&mut self, dx: f32, dy: f32) {
+        self.renderer.translate_camera(dx, dy);
+    }
+
+    pub fn set_camera_zoom(&mut self, zoom: f32) {
+        self.renderer.set_camera_zoom(zoom);
+    }
+
+    pub fn set_camera_rotation(&mut self, radians: f32) {
+        self.renderer.set_camera_rotation(radians);
+    }
+
     /// Finish the frame, flush commands to GPU, and present.
     pub fn end_frame(&mut self) -> Result<(), LibforgeError> {
         self.renderer.end_frame()?;
