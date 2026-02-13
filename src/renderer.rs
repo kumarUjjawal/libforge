@@ -324,6 +324,7 @@ where
             transform_bind_group_layout,
             transform_buffer,
             transform_bind_group,
+            camera: Camera2D::new(),
         })
     }
 
@@ -638,7 +639,8 @@ where
 
     pub fn reset_transform(&mut self) {
         let proj = self.ortho_projection();
-        self.set_transform_mat4(proj * Mat4::IDENTITY);
+        let view = self.camera.view_matrix();
+        self.set_transform_mat4(proj * view * Mat4::IDENTITY);
     }
 
     pub fn set_transform_2d_model(
@@ -654,7 +656,8 @@ where
         let translation = Mat4::from_translation(glam::vec3(tx, ty, 0.0));
         let model = translation * rotation * scale;
         let projection = self.ortho_projection();
-        self.set_transform_mat4(projection * model);
+        let view = self.camera.view_matrix();
+        self.set_transform_mat4(projection * view * model);
     }
 
     pub fn load_texture_from_bytes(
