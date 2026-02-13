@@ -96,46 +96,52 @@ where
         Ok(self.renderer.load_texture_from_bytes(name, bytes)?)
     }
 
-    pub fn set_transform_mat4(&mut self, mat: glam::Mat4) {
-        self.renderer.set_transform_mat4(mat);
+    // -------------------------------------------------------------------------
+    //
+    // Default drawing is in screen-space (pixels). To draw in world-space, enter
+    // 2D camera mode with `begin_mode_2d()` and exit with `end_mode_2d()`.
+    //
+    // Per-draw transforms are handled via a simple matrix stack.
+    // -------------------------------------------------------------------------
+
+    /// Begin 2D camera mode (world-space). Camera affects subsequent draws until `end_mode_2d()`.
+    pub fn begin_mode_2d(&mut self, camera: Camera2D) {
+        self.renderer.begin_mode_2d(camera);
     }
 
-    pub fn reset_transform(&mut self) {
-        self.renderer.reset_transform();
+    /// End 2D camera mode and return to screen-space drawing.
+    pub fn end_mode_2d(&mut self) {
+        self.renderer.end_mode_2d();
     }
 
-    /// Pixel-space convenience: set model transform (translation, rotation, scale)
-    pub fn set_transform_2d_model(
-        &mut self,
-        tx: f32,
-        ty: f32,
-        rotation_radian: f32,
-        sx: f32,
-        sy: f32,
-    ) {
-        self.renderer
-            .set_transform_2d_model(tx, ty, rotation_radian, sx, sy);
+    /// Push the current model transform.
+    pub fn push_matrix(&mut self) {
+        self.renderer.push_matrix();
     }
 
-    /// Camera
-    pub fn set_camera(&mut self, camera: Camera2D) {
-        self.renderer.set_camera(camera);
+    /// Pop the current model transform.
+    pub fn pop_matrix(&mut self) {
+        self.renderer.pop_matrix();
     }
 
-    pub fn set_camera_position(&mut self, x: f32, y: f32) {
-        self.renderer.set_camera_position(x, y);
+    /// Reset the current model transform to identity.
+    pub fn load_identity(&mut self) {
+        self.renderer.load_identity();
     }
 
-    pub fn translate_camera(&mut self, dx: f32, dy: f32) {
-        self.renderer.translate_camera(dx, dy);
+    /// Apply a translation to the current model transform.
+    pub fn translate(&mut self, tx: f32, ty: f32) {
+        self.renderer.translate(tx, ty);
     }
 
-    pub fn set_camera_zoom(&mut self, zoom: f32) {
-        self.renderer.set_camera_zoom(zoom);
+    /// Apply a rotation (around Z) to the current model transform.
+    pub fn rotate_z(&mut self, radians: f32) {
+        self.renderer.rotate_z(radians);
     }
 
-    pub fn set_camera_rotation(&mut self, radians: f32) {
-        self.renderer.set_camera_rotation(radians);
+    /// Apply a scale to the current model transform.
+    pub fn scale(&mut self, sx: f32, sy: f32) {
+        self.renderer.scale(sx, sy);
     }
 
     /// Finish the frame, flush commands to GPU, and present.
@@ -146,8 +152,7 @@ where
 
     /// Handle window resize: pass the new logical size in pixels.
     ///
-    /// Note: resizing updates the transform pipeline's projection. If you are using a custom
-    /// transform (via `set_transform_mat4` / `set_transform_2d_model`), call it again after resize.
+    /// Resizing updates the internal screen-space projection and any active camera mode.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.renderer.resize(width, height);
     }

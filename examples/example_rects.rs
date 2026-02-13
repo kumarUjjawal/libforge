@@ -22,9 +22,7 @@ impl ApplicationHandler for App {
         self.window = Some(window.clone());
         // Create the library context from the winit window.
         // Passing Arc<Window> results in a static surface lifetime.
-        let mut ctx = LibContext::new_from_window(window).unwrap();
-        // Initialize the transform pipeline to pixel-space orthographic projection.
-        ctx.reset_transform();
+        let ctx = LibContext::new_from_window(window).unwrap();
         self.ctx = Some(ctx);
     }
     fn window_event(

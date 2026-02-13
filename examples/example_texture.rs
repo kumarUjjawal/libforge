@@ -23,8 +23,6 @@ impl ApplicationHandler for App {
         self.window = Some(window.clone());
         
         let mut ctx = LibContext::new_from_window(window).unwrap();
-        // Initialize the transform pipeline to pixel-space orthographic projection.
-        ctx.reset_transform();
         
         // Load texture once at startup
         let bytes = include_bytes!("tennis-clay-court.png");
@@ -54,8 +52,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(ctx) = &mut self.ctx {
-                    if let Some(tex) = self.texture {
+                if let Some(ctx) = &mut self.ctx
+                    && let Some(tex) = self.texture {
                         ctx.begin_frame(Some(Color([0.1, 0.1, 0.15, 1.0])));
 
                         // Draw texture filling most of the window
@@ -71,7 +69,6 @@ impl ApplicationHandler for App {
                         );
 
                         ctx.end_frame().expect("end_frame failed");
-                    }
                 }
             }
             _ => {}

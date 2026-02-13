@@ -23,9 +23,6 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
         let mut ctx = LibContext::new_from_window(window).unwrap();
-        // Initialize the transform pipeline to pixel-space orthographic projection.
-        ctx.reset_transform();
-
         // Load texture once at startup
         let bytes = include_bytes!("tennis-clay-court.png");
         let tex = ctx
@@ -54,8 +51,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(ctx) = &mut self.ctx {
-                    if let Some(tex) = self.texture {
+                if let Some(ctx) = &mut self.ctx
+                    && let Some(tex) = self.texture {
                         ctx.begin_frame(Some(Color([0.05, 0.05, 0.1, 1.0])));
 
                         // Draw the same texture 9 times in a 3x3 grid with different tints
@@ -106,7 +103,6 @@ impl ApplicationHandler for App {
                         if let Some(window) = &self.window {
                             window.request_redraw();
                         }
-                    }
                 }
             }
             _ => {}

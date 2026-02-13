@@ -8,6 +8,12 @@ pub struct Camera2D {
     pub zoom: f32,
 }
 
+impl Default for Camera2D {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Camera2D {
     pub fn new() -> Self {
         Self {

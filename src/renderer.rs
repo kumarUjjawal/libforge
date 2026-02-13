@@ -6,6 +6,20 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::f32::consts::PI;
 use wgpu::util::DeviceExt;
 
+fn transform_pos2(mat: Mat4, p: [f32; 2]) -> [f32; 2] {
+    let v = mat * glam::vec4(p[0], p[1], 0.0, 1.0);
+    [v.x, v.y]
+}
+
+fn transform_vertices_in_place(mat: Mat4, verts: &mut [Vertex]) {
+    if mat == Mat4::IDENTITY {
+        return;
+    }
+    for v in verts {
+        v.pos = transform_pos2(mat, v.pos);
+    }
+}
+
 /// Internal renderer storing wgpu objects and a per-frame vertex list.
 ///
 /// `wgpu::Surface` carries a lifetime parameter because (on some platforms) the surface
@@ -55,7 +69,11 @@ pub struct Renderer<W> {
 
     pub transform_bind_group: wgpu::BindGroup,
 
-    pub camera: Camera2D,
+    // Scoped 2D camera mode: active only between begin_mode_2d/end_mode_2d.
+    camera_stack: Vec<Camera2D>,
+
+    // CPU-side model matrix stack (applied per-draw to vertex positions).
+    model_stack: Vec<Mat4>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -303,7 +321,7 @@ where
             multiview: None,
         });
 
-        Ok(Self {
+        let mut renderer = Self {
             _window: window,
             _instance: instance,
             surface,
@@ -324,8 +342,14 @@ where
             transform_bind_group_layout,
             transform_buffer,
             transform_bind_group,
-            camera: Camera2D::new(),
-        })
+            camera_stack: Vec::new(),
+            model_stack: vec![Mat4::IDENTITY],
+        };
+
+        // Default mode is screen-space (no camera). Upload projection*view to the transform uniform.
+        renderer.update_viewproj_transform();
+
+        Ok(renderer)
     }
 
     pub fn ensure_vertex_capacity(&mut self, needed: usize) {
@@ -362,8 +386,8 @@ where
 
         let c = color.0;
 
-        // two triangles (triangle list), 6 vertices (pixel-space positions)
-        let vertices = [
+        // two triangles (triangle list), 6 vertices
+        let mut vertices = [
             Vertex {
                 pos: [x0, y0],
                 uv: [0.0, 0.0],
@@ -396,6 +420,9 @@ where
             },
         ];
 
+        let model = self.current_model_matrix();
+        transform_vertices_in_place(model, &mut vertices);
+
         let start = self.vertices.len();
         self.vertices.extend_from_slice(&vertices);
 
@@ -421,7 +448,9 @@ where
         // compute quad in pixel space
         let quad = line_to_quad(x1, y1, x2, y2, thickness);
         // convert quad into 6 vertices (pixel space)
-        let verts = quad_to_vertices(quad, color);
+        let mut verts = quad_to_vertices(quad, color);
+        let model = self.current_model_matrix();
+        transform_vertices_in_place(model, &mut verts);
 
         // ensure capacity
         let needed_total = self.vertices.len() + verts.len();
@@ -443,7 +472,9 @@ where
 
     /// Draws a circle (triangle-fan) in pixel-space
     pub fn draw_circle(&mut self, x: f32, y: f32, radius: f32, segments: usize, color: [f32; 4]) {
-        let verts = circle_to_vertices(x, y, radius, segments, color);
+        let mut verts = circle_to_vertices(x, y, radius, segments, color);
+        let model = self.current_model_matrix();
+        transform_vertices_in_place(model, &mut verts);
 
         // ensure capacity
         let needed_total = self.vertices.len() + verts.len();
@@ -480,7 +511,7 @@ where
 
         let start = self.vertices.len();
 
-        let verts = [
+        let mut verts = [
             Vertex {
                 pos: [x0, y0],
                 uv: [u0, v0],
@@ -517,6 +548,9 @@ where
         let needed_total = self.vertices.len() + verts.len();
         self.ensure_vertex_capacity(needed_total);
 
+        let model = self.current_model_matrix();
+        transform_vertices_in_place(model, &mut verts);
+
         self.vertices.extend_from_slice(&verts);
         self.commands.push(DrawCommand::Texture {
             tex: id,
@@ -547,7 +581,7 @@ where
         let y1 = dst.y + dst.h;
 
         let start = self.vertices.len();
-        let verts = [
+        let mut verts = [
             Vertex {
                 pos: [x0, y0],
                 uv: [u0, v0],
@@ -582,6 +616,10 @@ where
 
         let needed_total = start + verts.len();
         self.ensure_vertex_capacity(needed_total);
+
+        let model = self.current_model_matrix();
+        transform_vertices_in_place(model, &mut verts);
+
         self.vertices.extend_from_slice(&verts);
 
         self.commands.push(DrawCommand::Texture {
@@ -603,61 +641,78 @@ where
         )
     }
 
-    // Camera
-    pub fn set_camera(&mut self, camera: Camera2D) {
-        self.camera = camera;
-        self.reset_transform();
-    }
-
-    pub fn set_camera_position(&mut self, x: f32, y: f32) {
-        self.camera.x = x;
-        self.camera.y = y;
-        self.reset_transform();
-    }
-
-    pub fn translate_camera(&mut self, dx: f32, dy: f32) {
-        self.camera.x += dx;
-        self.camera.y += dy;
-        self.reset_transform();
-    }
-
-    pub fn set_camera_zoom(&mut self, zoom: f32) {
-        self.camera.zoom = if zoom <= 0.0 { 1.0 } else { zoom };
-        self.reset_transform();
-    }
-
-    pub fn set_camera_rotation(&mut self, radians: f32) {
-        self.camera.rotation = radians;
-        self.reset_transform();
-    }
-
-    pub fn set_transform_mat4(&mut self, mat: Mat4) {
+    fn set_transform_mat4(&mut self, mat: Mat4) {
         let cols = mat.to_cols_array();
         self.queue
             .write_buffer(&self.transform_buffer, 0, bytemuck::cast_slice(&cols));
     }
 
-    pub fn reset_transform(&mut self) {
-        let proj = self.ortho_projection();
-        let view = self.camera.view_matrix();
-        self.set_transform_mat4(proj * view * Mat4::IDENTITY);
+    fn current_view_matrix(&self) -> Mat4 {
+        self.camera_stack
+            .last()
+            .map(|c| c.view_matrix())
+            .unwrap_or(Mat4::IDENTITY)
     }
 
-    pub fn set_transform_2d_model(
-        &mut self,
-        tx: f32,
-        ty: f32,
-        rotation_radian: f32,
-        sx: f32,
-        sy: f32,
-    ) {
-        let scale = Mat4::from_scale(glam::vec3(sx, sy, 1.0));
-        let rotation = Mat4::from_rotation_z(rotation_radian);
-        let translation = Mat4::from_translation(glam::vec3(tx, ty, 0.0));
-        let model = translation * rotation * scale;
-        let projection = self.ortho_projection();
-        let view = self.camera.view_matrix();
-        self.set_transform_mat4(projection * view * model);
+    fn update_viewproj_transform(&mut self) {
+        let proj = self.ortho_projection();
+        let view = self.current_view_matrix();
+        self.set_transform_mat4(proj * view);
+    }
+
+    /// Begin 2D camera mode (world-space). Camera only applies until `end_mode_2d()`.
+    pub fn begin_mode_2d(&mut self, camera: Camera2D) {
+        self.camera_stack.push(camera);
+        self.update_viewproj_transform();
+    }
+
+    /// End 2D camera mode, returning to screen-space.
+    pub fn end_mode_2d(&mut self) {
+        self.camera_stack.pop();
+        self.update_viewproj_transform();
+    }
+
+    /// Model matrix stack (CPU-side, per-draw).
+    pub fn push_matrix(&mut self) {
+        let top = *self.model_stack.last().unwrap_or(&Mat4::IDENTITY);
+        self.model_stack.push(top);
+    }
+
+    pub fn pop_matrix(&mut self) {
+        if self.model_stack.len() > 1 {
+            self.model_stack.pop();
+        }
+    }
+
+    pub fn load_identity(&mut self) {
+        if let Some(top) = self.model_stack.last_mut() {
+            *top = Mat4::IDENTITY;
+        }
+    }
+
+    pub fn translate(&mut self, tx: f32, ty: f32) {
+        let t = Mat4::from_translation(glam::vec3(tx, ty, 0.0));
+        if let Some(top) = self.model_stack.last_mut() {
+            *top *= t;
+        }
+    }
+
+    pub fn rotate_z(&mut self, radians: f32) {
+        let r = Mat4::from_rotation_z(radians);
+        if let Some(top) = self.model_stack.last_mut() {
+            *top *= r;
+        }
+    }
+
+    pub fn scale(&mut self, sx: f32, sy: f32) {
+        let s = Mat4::from_scale(glam::vec3(sx, sy, 1.0));
+        if let Some(top) = self.model_stack.last_mut() {
+            *top *= s;
+        }
+    }
+
+    fn current_model_matrix(&self) -> Mat4 {
+        *self.model_stack.last().unwrap_or(&Mat4::IDENTITY)
     }
 
     pub fn load_texture_from_bytes(
@@ -764,7 +819,7 @@ where
         self.surface.configure(&self.device, &self.surface_config);
 
         // Keep the default transform in sync with the new surface size.
-        self.reset_transform();
+        self.update_viewproj_transform();
     }
 
     /// End frame: create buffers, record commands, submit, and present.
@@ -860,6 +915,7 @@ where
         Ok(())
     }
 }
+#[allow(dead_code)]
 pub(crate) fn rect_to_ndc_coords(rect: crate::Rect, width: u32, height: u32) -> [f32; 12] {
     let w = width as f32;
     let h = height as f32;

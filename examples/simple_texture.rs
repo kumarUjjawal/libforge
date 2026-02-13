@@ -24,9 +24,6 @@ impl ApplicationHandler for App {
 
         // Create context and load texture once
         let mut ctx = LibContext::new_from_window(window.clone()).unwrap();
-        // Initialize the transform pipeline to pixel-space orthographic projection.
-        ctx.reset_transform();
-
         let bytes = include_bytes!("tennis-clay-court.png");
         let tex = ctx
             .load_texture_from_bytes("tennis_court", bytes)
@@ -58,8 +55,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(ctx) = &mut self.ctx {
-                    if let Some(tex) = self.texture {
+                if let Some(ctx) = &mut self.ctx
+                    && let Some(tex) = self.texture {
                         ctx.begin_frame(Some(Color([0.1, 0.1, 0.15, 1.0])));
 
                         // Draw the texture
@@ -75,7 +72,6 @@ impl ApplicationHandler for App {
                         );
 
                         ctx.end_frame().expect("end_frame failed");
-                    }
                 }
             }
             _ => {}

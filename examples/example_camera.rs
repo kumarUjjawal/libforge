@@ -5,7 +5,8 @@ use winit::{
     dpi::PhysicalSize,
     event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{Key, NamedKey},
+    keyboard::{KeyCode, PhysicalKey},
+
     window::{Window, WindowId},
 };
 
@@ -39,14 +40,12 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
 
-        let mut ctx = LibContext::new_from_window(window).unwrap();
-        // Initialize the transform pipeline (projection * view).
-        ctx.reset_transform();
+        let ctx = LibContext::new_from_window(window).unwrap();
         self.ctx = Some(ctx);
 
-        // Ensure the camera state is applied.
-        if let Some(ctx) = &mut self.ctx {
-            ctx.set_camera(self.camera);
+        // Kick the first frame.
+        if let Some(window) = &self.window {
+            window.request_redraw();
         }
     }
 
@@ -68,16 +67,18 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let is_down = event.state == ElementState::Pressed;
-                match event.logical_key {
-                    Key::Named(NamedKey::ArrowLeft) => self.left = is_down,
-                    Key::Named(NamedKey::ArrowRight) => self.right = is_down,
-                    Key::Named(NamedKey::ArrowUp) => self.up = is_down,
-                    Key::Named(NamedKey::ArrowDown) => self.down = is_down,
-                    Key::Character(ref c) if c.eq_ignore_ascii_case("q") => self.rot_left = is_down,
-                    Key::Character(ref c) if c.eq_ignore_ascii_case("e") => self.rot_right = is_down,
-                    Key::Character(ref c) if c == "+" || c == "=" => self.zoom_in = is_down,
-                    Key::Character(ref c) if c == "-" || c == "_" => self.zoom_out = is_down,
-                    Key::Named(NamedKey::Escape) if is_down => event_loop.exit(),
+                match event.physical_key {
+                    PhysicalKey::Code(KeyCode::ArrowLeft) => self.left = is_down,
+                    PhysicalKey::Code(KeyCode::ArrowRight) => self.right = is_down,
+                    PhysicalKey::Code(KeyCode::ArrowUp) => self.up = is_down,
+                    PhysicalKey::Code(KeyCode::ArrowDown) => self.down = is_down,
+                    PhysicalKey::Code(KeyCode::KeyQ) => self.rot_left = is_down,
+                    PhysicalKey::Code(KeyCode::KeyE) => self.rot_right = is_down,
+                    PhysicalKey::Code(KeyCode::Equal) => self.zoom_in = is_down, // '+' without shift on many layouts
+                    PhysicalKey::Code(KeyCode::NumpadAdd) => self.zoom_in = is_down,
+                    PhysicalKey::Code(KeyCode::Minus) => self.zoom_out = is_down,
+                    PhysicalKey::Code(KeyCode::NumpadSubtract) => self.zoom_out = is_down,
+                    PhysicalKey::Code(KeyCode::Escape) if is_down => event_loop.exit(),
                     _ => {}
                 }
                 if let Some(window) = &self.window {
@@ -115,13 +116,14 @@ impl ApplicationHandler for App {
                     self.camera.zoom = (self.camera.zoom - zoom_speed).max(0.05);
                 }
                 if self.zoom_out {
-                    self.camera.zoom = self.camera.zoom + zoom_speed;
+                    self.camera.zoom += zoom_speed;
                 }
-
-                ctx.set_camera(self.camera);
 
                 // Draw
                 ctx.begin_frame(Some(Color([0.06, 0.06, 0.08, 1.0])));
+
+                // World-space drawing under a scoped 2D camera mode.
+                ctx.begin_mode_2d(self.camera);
 
                 // A simple grid + some reference shapes in world space.
                 let grid_color = Color([0.25, 0.25, 0.3, 1.0]);
@@ -149,7 +151,26 @@ impl ApplicationHandler for App {
                 ctx.draw_circle(300.0, 200.0, 40.0, 32, Color([1.0, 0.85, 0.2, 1.0]));
                 ctx.draw_circle(-450.0, -300.0, 60.0, 32, Color([0.9, 0.3, 0.9, 1.0]));
 
+                ctx.end_mode_2d();
+
                 ctx.end_frame().unwrap();
+
+                // Keep animating while a key is held (otherwise some platforms won't
+                // generate repeat key events, so the camera would "not move").
+                let any_input = self.left
+                    || self.right
+                    || self.up
+                    || self.down
+                    || self.rot_left
+                    || self.rot_right
+                    || self.zoom_in
+                    || self.zoom_out;
+
+                if any_input {
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                }
             }
             _ => {}
         }
