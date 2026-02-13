@@ -1,3 +1,4 @@
+use crate::camera::Camera2D;
 use crate::error::RendererError;
 use crate::vertex::Vertex;
 use glam::Mat4;
@@ -53,6 +54,8 @@ pub struct Renderer<W> {
     pub transform_buffer: wgpu::Buffer,
 
     pub transform_bind_group: wgpu::BindGroup,
+
+    pub camera: Camera2D,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -597,6 +600,34 @@ where
             glam::vec4(0.0, 1.0, 0.0, 0.0),
             glam::vec4(-1.0, 1.0, 0.0, 1.0),
         )
+    }
+
+    // Camera
+    pub fn set_camera(&mut self, camera: Camera2D) {
+        self.camera = camera;
+        self.reset_transform();
+    }
+
+    pub fn set_camera_position(&mut self, x: f32, y: f32) {
+        self.camera.x = x;
+        self.camera.y = y;
+        self.reset_transform();
+    }
+
+    pub fn translate_camera(&mut self, dx: f32, dy: f32) {
+        self.camera.x += dx;
+        self.camera.y += dy;
+        self.reset_transform();
+    }
+
+    pub fn set_camera_zoom(&mut self, zoom: f32) {
+        self.camera.zoom = if zoom <= 0.0 { 1.0 } else { zoom };
+        self.reset_transform();
+    }
+
+    pub fn set_camera_rotation(&mut self, radians: f32) {
+        self.camera.rotation = radians;
+        self.reset_transform();
     }
 
     pub fn set_transform_mat4(&mut self, mat: Mat4) {

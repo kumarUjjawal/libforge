@@ -1,9 +1,12 @@
+pub mod camera;
 pub mod error;
 pub mod renderer;
 pub mod sprite_animation;
 pub mod vertex;
 
+pub use crate::camera::Camera2D;
 pub use crate::renderer::TextureId;
+
 use crate::sprite_animation::SpriteAnimation;
 use error::LibforgeError;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
