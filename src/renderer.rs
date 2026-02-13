@@ -2,6 +2,7 @@ use crate::error::RendererError;
 use crate::vertex::Vertex;
 use glam::Mat4;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use std::f32::consts::PI;
 use wgpu::util::DeviceExt;
 
 /// Internal renderer storing wgpu objects and a per-frame vertex list.
@@ -350,19 +351,14 @@ where
 
     /// Draw a filled rectangle in logical pixel coordinates. We convert to NDC here.
     pub fn draw_rect(&mut self, rect: crate::Rect, color: crate::Color) {
-        // convert to NDC (x,y logical -> -1..1)
-        let width = self.surface_config.width as f32;
-        let height = self.surface_config.height as f32;
-
-        // Note: wgpu and winit coordinate spaces: we'll treat y=0 at top and convert to NDC y with origin center.
-        let x0 = (rect.x / width) * 2.0 - 1.0;
-        let y0 = 1.0 - (rect.y / height) * 2.0; // flip y
-        let x1 = ((rect.x + rect.w) / width) * 2.0 - 1.0;
-        let y1 = 1.0 - ((rect.y + rect.h) / height) * 2.0;
+        let x0 = rect.x;
+        let y0 = rect.y;
+        let x1 = rect.x + rect.w;
+        let y1 = rect.y + rect.h;
 
         let c = color.0;
 
-        // two triangles (triangle list), 6 vertices
+        // two triangles (triangle list), 6 vertices (pixel-space positions)
         let vertices = [
             Vertex {
                 pos: [x0, y0],
@@ -398,6 +394,7 @@ where
 
         let start = self.vertices.len();
         self.vertices.extend_from_slice(&vertices);
+
         match self.commands.last_mut() {
             Some(DrawCommand::Color { count, .. }) => *count += vertices.len(),
             _ => self.commands.push(DrawCommand::Color {
@@ -407,7 +404,7 @@ where
         }
     }
 
-    /// Draws a line
+    /// Draws a line (as a thick quad)
     pub fn draw_line(
         &mut self,
         x1: f32,
@@ -417,43 +414,20 @@ where
         thickness: f32,
         color: [f32; 4],
     ) {
+        // compute quad in pixel space
         let quad = line_to_quad(x1, y1, x2, y2, thickness);
-        let verts = quad_to_vertices(
-            quad,
-            color,
-            self.surface_config.width as f32,
-            self.surface_config.height as f32,
-        );
-        let start = self.vertices.len();
-        self.vertices.extend(&verts);
-        match self.commands.last_mut() {
-            Some(DrawCommand::Color { count, .. }) => *count += verts.len(),
-            _ => self.commands.push(DrawCommand::Color {
-                start,
-                count: verts.len(),
-            }),
-        }
-    }
-
-    /// Draws a circle
-    pub fn draw_circle(&mut self, x: f32, y: f32, radius: f32, segments: usize, color: [f32; 4]) {
-        let verts = circle_to_vertices(
-            x,
-            y,
-            radius,
-            segments,
-            color,
-            self.surface_config.width as u32,
-            self.surface_config.height as u32,
-        );
+        // convert quad into 6 vertices (pixel space)
+        let verts = quad_to_vertices(quad, color);
 
         // ensure capacity
         let needed_total = self.vertices.len() + verts.len();
         if needed_total > self.vertex_capacity {
             self.ensure_vertex_capacity(needed_total);
         }
+
         let start = self.vertices.len();
         self.vertices.extend_from_slice(&verts);
+
         match self.commands.last_mut() {
             Some(DrawCommand::Color { count, .. }) => *count += verts.len(),
             _ => self.commands.push(DrawCommand::Color {
@@ -463,8 +437,32 @@ where
         }
     }
 
+    /// Draws a circle (triangle-fan) in pixel-space
+    pub fn draw_circle(&mut self, x: f32, y: f32, radius: f32, segments: usize, color: [f32; 4]) {
+        let verts = circle_to_vertices(x, y, radius, segments, color);
+
+        // ensure capacity
+        let needed_total = self.vertices.len() + verts.len();
+        if needed_total > self.vertex_capacity {
+            self.ensure_vertex_capacity(needed_total);
+        }
+
+        let start = self.vertices.len();
+        self.vertices.extend_from_slice(&verts);
+
+        match self.commands.last_mut() {
+            Some(DrawCommand::Color { count, .. }) => *count += verts.len(),
+            _ => self.commands.push(DrawCommand::Color {
+                start,
+                count: verts.len(),
+            }),
+        }
+    }
+
+    /// Draws a texture (full image) at dest in pixel-space.
+    /// UVs are (0,0)-(1,1) top-left -> bottom-right.
     pub fn draw_texture(&mut self, id: TextureId, dest: crate::Rect, tint: [f32; 4]) {
-        // compute vertices (positions + uvs)
+        // Pixel-space positions
         let x0 = dest.x;
         let y0 = dest.y;
         let x1 = dest.x + dest.w;
@@ -476,49 +474,36 @@ where
         let u1 = 1.0f32;
         let v1 = 1.0f32;
 
-        // convert to NDC and pack Vertex with uv
-        let to_ndc = |x: f32, y: f32| {
-            let w = self.surface_config.width as f32;
-            let h = self.surface_config.height as f32;
-            let nx = (x / w) * 2.0 - 1.0;
-            let ny = 1.0 - (y / h) * 2.0;
-            (nx, ny)
-        };
-
-        let (nx0, ny0) = to_ndc(x0, y0);
-        let (nx1, ny1) = to_ndc(x1, y1);
-
-        // Quad: p0 = (nx0, ny0) TL, p1 = (nx1, ny0) TR, p2 = (nx1, ny1) BR, p3 = (nx0, ny1) BL
         let start = self.vertices.len();
 
         let verts = [
             Vertex {
-                pos: [nx0, ny0],
+                pos: [x0, y0],
                 uv: [u0, v0],
                 color: tint,
             },
             Vertex {
-                pos: [nx1, ny0],
+                pos: [x1, y0],
                 uv: [u1, v0],
                 color: tint,
             },
             Vertex {
-                pos: [nx1, ny1],
+                pos: [x1, y1],
                 uv: [u1, v1],
                 color: tint,
             },
             Vertex {
-                pos: [nx0, ny0],
+                pos: [x0, y0],
                 uv: [u0, v0],
                 color: tint,
             },
             Vertex {
-                pos: [nx1, ny1],
+                pos: [x1, y1],
                 uv: [u1, v1],
                 color: tint,
             },
             Vertex {
-                pos: [nx0, ny1],
+                pos: [x0, y1],
                 uv: [u0, v1],
                 color: tint,
             },
@@ -535,7 +520,6 @@ where
             count: verts.len(),
         });
     }
-
     pub fn draw_subtexture(
         &mut self,
         tex: TextureId,
@@ -856,144 +840,116 @@ pub(crate) fn rect_to_ndc_coords(rect: crate::Rect, width: u32, height: u32) -> 
     ]
 }
 
-pub(crate) fn line_to_quad(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32) -> [(f32, f32); 4] {
+// helper: convert a line (x1,y1)-(x2,y2) and thickness into a quad (4 points)
+// Returns points in CCW order: [top-left, top-right, bottom-right, bottom-left]
+pub(crate) fn line_to_quad(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32) -> [[f32; 2]; 4] {
     let dx = x2 - x1;
     let dy = y2 - y1;
-    let len = (dx * dx + dy * dy).sqrt().max(0.0001);
-
-    // unit direction
+    let len = (dx * dx + dy * dy).sqrt().max(1e-6); // avoid div by zero
     let ux = dx / len;
     let uy = dy / len;
 
-    // perpendicular
+    // perpendicular (pointing "up" relative to line direction)
     let px = -uy;
     let py = ux;
 
-    let half = thickness / 2.0;
-    let hx = px * half;
-    let hy = py * half;
+    let half = thickness * 0.5;
+    let ox = px * half;
+    let oy = py * half;
 
+    // top-left  = p1 + perp
+    // top-right = p2 + perp
+    // bottom-right = p2 - perp
+    // bottom-left  = p1 - perp
     [
-        (x1 + hx, y1 + hy), // p1
-        (x1 - hx, y1 - hy), // p2
-        (x2 + hx, y2 + hy), // p3
-        (x2 - hx, y2 - hy), // p4
+        [x1 + ox, y1 + oy], // tl
+        [x2 + ox, y2 + oy], // tr
+        [x2 - ox, y2 - oy], // br
+        [x1 - ox, y1 - oy], // bl
     ]
 }
 
+// helper: convert quad corners into 6 vertices (two triangles).
+// uv is unused for colored geometry so set to 0.0
+pub(crate) fn quad_to_vertices(quad: [[f32; 2]; 4], color: [f32; 4]) -> Vec<Vertex> {
+    let p0 = quad[0];
+    let p1 = quad[1];
+    let p2 = quad[2];
+    let p3 = quad[3];
+
+    vec![
+        Vertex {
+            pos: [p0[0], p0[1]],
+            uv: [0.0, 0.0],
+            color,
+        },
+        Vertex {
+            pos: [p1[0], p1[1]],
+            uv: [0.0, 0.0],
+            color,
+        },
+        Vertex {
+            pos: [p2[0], p2[1]],
+            uv: [0.0, 0.0],
+            color,
+        },
+        Vertex {
+            pos: [p0[0], p0[1]],
+            uv: [0.0, 0.0],
+            color,
+        },
+        Vertex {
+            pos: [p2[0], p2[1]],
+            uv: [0.0, 0.0],
+            color,
+        },
+        Vertex {
+            pos: [p3[0], p3[1]],
+            uv: [0.0, 0.0],
+            color,
+        },
+    ]
+}
+
+// helper: build a triangle-fan circle in pixel-space
+// returns Vec<Vertex> with triangles (center, p_i, p_i+1)
 pub(crate) fn circle_to_vertices(
     cx: f32,
     cy: f32,
     radius: f32,
     segments: usize,
     color: [f32; 4],
-    width: u32,
-    height: u32,
 ) -> Vec<Vertex> {
     let mut verts = Vec::with_capacity(segments * 3);
+    let step = 2.0 * PI / (segments as f32);
 
-    // convert pixel coords -> NDC
-    let to_ndc = |x: f32, y: f32| {
-        let w = width as f32;
-        let h = height as f32;
-        let nx = (x / w) * 2.0 - 1.0;
-        let ny = 1.0 - (y / h) * 2.0;
-        (nx, ny)
-    };
-
-    let (cx_ndc, cy_ndc) = to_ndc(cx, cy);
-
-    let seg = std::cmp::max(2, segments);
-    let two_pi = std::f32::consts::TAU;
-    let angle_step = two_pi / seg as f32;
-
-    for i in 0..seg {
-        let a0 = i as f32 * angle_step;
-        let a1 = ((i + 1) % seg) as f32 * angle_step;
-
+    for i in 0..segments {
+        let a0 = (i as f32) * step;
+        let a1 = ((i + 1) as f32) * step;
         let x0 = cx + a0.cos() * radius;
         let y0 = cy + a0.sin() * radius;
-
         let x1 = cx + a1.cos() * radius;
         let y1 = cy + a1.sin() * radius;
 
-        let (x0_ndc, y0_ndc) = to_ndc(x0, y0);
-        let (x1_ndc, y1_ndc) = to_ndc(x1, y1);
-
+        // triangle (center, p0, p1)
         verts.push(Vertex {
-            pos: [cx_ndc, cy_ndc],
+            pos: [cx, cy],
             uv: [0.0, 0.0],
             color,
         });
         verts.push(Vertex {
-            pos: [x0_ndc, y0_ndc],
-
+            pos: [x0, y0],
             uv: [0.0, 0.0],
             color,
         });
         verts.push(Vertex {
-            pos: [x1_ndc, y1_ndc],
-
+            pos: [x1, y1],
             uv: [0.0, 0.0],
             color,
         });
     }
+
     verts
-}
-
-pub(crate) fn quad_to_vertices(
-    p: [(f32, f32); 4],
-    color: [f32; 4],
-    width: f32,
-    height: f32,
-) -> [Vertex; 6] {
-    let to_ndc = |x: f32, y: f32| {
-        let w = width as f32;
-        let h = height as f32;
-        let nx = (x / w) * 2.0 - 1.0;
-        let ny = 1.0 - (y / h) * 2.0;
-        (nx, ny)
-    };
-
-    let (x1, y1) = to_ndc(p[0].0, p[0].1);
-    let (x2, y2) = to_ndc(p[1].0, p[1].1);
-    let (x3, y3) = to_ndc(p[2].0, p[2].1);
-    let (x4, y4) = to_ndc(p[3].0, p[3].1);
-
-    [
-        Vertex {
-            pos: [x1, y1],
-
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [x3, y3],
-
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [x4, y4],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [x1, y1],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [x4, y4],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [x2, y2],
-            uv: [0.0, 0.0],
-            color,
-        },
-    ]
 }
 
 #[cfg(test)]
@@ -1054,7 +1010,7 @@ mod tests {
         let width = 200u32;
         let height = 100u32;
 
-        let verts = crate::renderer::circle_to_vertices(cx, cy, radius, seg, color, width, height);
+        let verts = crate::renderer::circle_to_vertices(cx, cy, radius, seg, color);
         // for seg triangles, we expect seg * 3 vertices
         assert_eq!(verts.len(), seg * 3);
 
