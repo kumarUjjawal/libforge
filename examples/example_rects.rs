@@ -22,7 +22,9 @@ impl ApplicationHandler for App {
         self.window = Some(window.clone());
         // Create the library context from the winit window.
         // Passing Arc<Window> results in a static surface lifetime.
-        let ctx = LibContext::new_from_window(window).unwrap();
+        let mut ctx = LibContext::new_from_window(window).unwrap();
+        // Initialize the transform pipeline to pixel-space orthographic projection.
+        ctx.reset_transform();
         self.ctx = Some(ctx);
     }
     fn window_event(
@@ -38,6 +40,8 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if let Some(ctx) = &mut self.ctx {
                     ctx.resize(size.width, size.height);
+                    // Resize changes the projection, so update the transform uniform.
+                    ctx.reset_transform();
                     if let Some(window) = &self.window {
                         window.request_redraw();
                     }

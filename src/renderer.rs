@@ -1007,18 +1007,14 @@ mod tests {
         let cy = 40.0f32;
         let radius = 10.0f32;
         let color = [1.0, 0.0, 0.0, 1.0];
-        let width = 200u32;
-        let height = 100u32;
-
         let verts = crate::renderer::circle_to_vertices(cx, cy, radius, seg, color);
         // for seg triangles, we expect seg * 3 vertices
         assert_eq!(verts.len(), seg * 3);
 
-        // center of first triangle should be center in NDC
-        let center_ndc_x = (cx / width as f32) * 2.0 - 1.0;
-        let center_ndc_y = 1.0 - (cy / height as f32) * 2.0;
-        assert!((verts[0].pos[0] - center_ndc_x).abs() < 1e-6);
-        assert!((verts[0].pos[1] - center_ndc_y).abs() < 1e-6);
+        // With the transform pipeline, CPU-side vertex positions are in pixel-space.
+        // The projection to NDC happens in the vertex shader via `u_transform`.
+        assert!((verts[0].pos[0] - cx).abs() < 1e-6);
+        assert!((verts[0].pos[1] - cy).abs() < 1e-6);
     }
 
     #[test]
@@ -1051,40 +1047,61 @@ mod tests {
 
     #[test]
     fn draw_texture_generates_correct_vertices() {
-        // We can't easily test the full renderer without a GPU,
-        // but we can verify the vertex generation logic
+        // We can't easily test the full renderer without a GPU, but we can verify
+        // the CPU-side vertex generation conventions.
+        //
+        // With the transform pipeline, vertex positions are in pixel-space and are
+        // projected to NDC in the vertex shader using `u_transform`.
         let dest = crate::Rect {
             x: 100.0,
             y: 100.0,
             w: 200.0,
             h: 150.0,
         };
-        let _tint = [1.0, 0.5, 0.25, 0.8];
-
-        // Manually compute what draw_texture should generate
-        let width = 800.0;
-        let height = 600.0;
 
         let x0 = dest.x;
         let y0 = dest.y;
         let x1 = dest.x + dest.w;
         let y1 = dest.y + dest.h;
 
-        // Convert to NDC
-        let nx0 = (x0 / width) * 2.0 - 1.0;
-        let ny0 = 1.0 - (y0 / height) * 2.0;
-        let nx1 = (x1 / width) * 2.0 - 1.0;
-        let ny1 = 1.0 - (y1 / height) * 2.0;
+        // This matches the positions pushed by `Renderer::draw_texture`.
+        let verts = [
+            Vertex {
+                pos: [x0, y0],
+                uv: [0.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [x1, y0],
+                uv: [1.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [x1, y1],
+                uv: [1.0, 1.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [x0, y0],
+                uv: [0.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [x1, y1],
+                uv: [1.0, 1.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [x0, y1],
+                uv: [0.0, 1.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+        ];
 
-        // Verify our NDC conversion is correct
-        // x0=100, width=800 -> nx0 = (100/800)*2 - 1 = 0.25 - 1 = -0.75
-        // y0=100, height=600 -> ny0 = 1 - (100/600)*2 = 1 - 0.333... = 0.666...
-        // x1=300, width=800 -> nx1 = (300/800)*2 - 1 = 0.75 - 1 = -0.25
-        // y1=250, height=600 -> ny1 = 1 - (250/600)*2 = 1 - 0.833... = 0.166...
-        assert!((nx0 - (-0.75)).abs() < 1e-5);
-        assert!((ny0 - (0.666666)).abs() < 1e-4);
-        assert!((nx1 - (-0.25)).abs() < 1e-5);
-        assert!((ny1 - (0.166666)).abs() < 1e-4);
+        assert_eq!(verts[0].pos, [100.0, 100.0]);
+        assert_eq!(verts[1].pos, [300.0, 100.0]);
+        assert_eq!(verts[2].pos, [300.0, 250.0]);
+        assert_eq!(verts[5].pos, [100.0, 250.0]);
     }
 
     #[test]

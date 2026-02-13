@@ -60,7 +60,9 @@ impl ApplicationHandler for App {
             .with_inner_size(PhysicalSize::new(800, 600));
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
-        let ctx = LibContext::new_from_window(window).unwrap();
+        let mut ctx = LibContext::new_from_window(window).unwrap();
+        // Initialize the transform pipeline to pixel-space orthographic projection.
+        ctx.reset_transform();
         self.ctx = Some(ctx);
 
         // Initialize balls
@@ -121,6 +123,8 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if let Some(ctx) = &mut self.ctx {
                     ctx.resize(size.width, size.height);
+                    // Resize changes the projection, so update the transform uniform.
+                    ctx.reset_transform();
                     self.width = size.width as f32;
                     self.height = size.height as f32;
                     if let Some(window) = &self.window {

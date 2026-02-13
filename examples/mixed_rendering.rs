@@ -23,6 +23,8 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
         let mut ctx = LibContext::new_from_window(window).unwrap();
+        // Initialize the transform pipeline to pixel-space orthographic projection.
+        ctx.reset_transform();
 
         // Load texture
         let bytes = include_bytes!("tennis-clay-court.png");
@@ -46,6 +48,8 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if let Some(ctx) = &mut self.ctx {
                     ctx.resize(size.width, size.height);
+                    // Resize changes the projection, so update the transform uniform.
+                    ctx.reset_transform();
                     if let Some(window) = &self.window {
                         window.request_redraw();
                     }

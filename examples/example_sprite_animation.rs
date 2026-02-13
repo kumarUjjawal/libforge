@@ -26,6 +26,8 @@ impl ApplicationHandler for App {
         self.window = Some(window.clone());
 
         let mut ctx = LibContext::new_from_window(window.clone()).unwrap();
+        // Initialize the transform pipeline to pixel-space orthographic projection.
+        ctx.reset_transform();
 
         // Load the spritesheet
         let bytes = include_bytes!("tennis-player-2.png");

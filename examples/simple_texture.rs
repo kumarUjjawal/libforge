@@ -24,6 +24,8 @@ impl ApplicationHandler for App {
 
         // Create context and load texture once
         let mut ctx = LibContext::new_from_window(window.clone()).unwrap();
+        // Initialize the transform pipeline to pixel-space orthographic projection.
+        ctx.reset_transform();
 
         let bytes = include_bytes!("tennis-clay-court.png");
         let tex = ctx
@@ -50,6 +52,8 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if let Some(ctx) = &mut self.ctx {
                     ctx.resize(size.width, size.height);
+                    // Resize changes the projection, so update the transform uniform.
+                    ctx.reset_transform();
                     if let Some(window) = &self.window {
                         window.request_redraw();
                     }

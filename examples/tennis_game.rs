@@ -373,7 +373,9 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
         self.window = Some(window.clone());
-        let ctx = LibContext::new_from_window(window.clone()).unwrap();
+        let mut ctx = LibContext::new_from_window(window.clone()).unwrap();
+        // Initialize the transform pipeline to pixel-space orthographic projection.
+        ctx.reset_transform();
         self.ctx = Some(ctx);
         window.request_redraw();
     }
