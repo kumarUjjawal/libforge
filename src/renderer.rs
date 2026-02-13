@@ -1,6 +1,8 @@
 use crate::error::RendererError;
 use crate::vertex::Vertex;
+use glam::Mat4;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use wgpu::util::DeviceExt;
 
 /// Internal renderer storing wgpu objects and a per-frame vertex list.
 ///
@@ -44,6 +46,12 @@ pub struct Renderer<W> {
 
     // pipeline
     pub texture_pipeline: wgpu::RenderPipeline,
+
+    pub transform_bind_group_layout: wgpu::BindGroupLayout,
+
+    pub transform_buffer: wgpu::Buffer,
+
+    pub transform_bind_group: wgpu::BindGroup,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -107,6 +115,42 @@ where
             })
             .await?;
 
+        let transform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("transform_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(
+                            std::num::NonZeroU64::new((16 * std::mem::size_of::<f32>()) as u64)
+                                .unwrap(),
+                        ),
+                    },
+                    count: None,
+                }],
+            });
+
+        let identity = Mat4::IDENTITY;
+        let identity_cols = identity.to_cols_array();
+
+        let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("transform_buffer"),
+            contents: bytemuck::cast_slice(&identity_cols),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("transform_bind_group"),
+            layout: &transform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: transform_buffer.as_entire_binding(),
+            }],
+        });
+
         let initial_capacity = 4096;
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -150,7 +194,7 @@ where
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&transform_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -216,7 +260,7 @@ where
         let texture_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("texture_pipeline_layout"),
-                bind_group_layouts: &[&tex_bind_group_layout],
+                bind_group_layouts: &[&transform_bind_group_layout, &tex_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -273,6 +317,9 @@ where
             tex_bind_group_layout,
             commands: Vec::new(),
             texture_pipeline,
+            transform_bind_group_layout,
+            transform_buffer,
+            transform_bind_group,
         })
     }
 
@@ -501,26 +548,17 @@ where
             None => return,
         };
 
-        // --- Compute normalized UVs from pixel-space source rect ---
         let u0 = src.x / texdata.width as f32;
         let v0 = src.y / texdata.height as f32;
         let u1 = (src.x + src.w) / texdata.width as f32;
         let v1 = (src.y + src.h) / texdata.height as f32;
 
-        // convert dst to ndc
-        let to_ndc = |x: f32, y: f32| {
-            let w = self.surface_config.width as f32;
-            let h = self.surface_config.height as f32;
-            let nx = (x / w) * 2.0 - 1.0;
-            let ny = 1.0 - (y / h) * 2.0;
-            (nx, ny)
-        };
-
-        let (x0, y0) = to_ndc(dst.x, dst.y);
-        let (x1, y1) = to_ndc(dst.x + dst.w, dst.y + dst.h);
+        let x0 = dst.x;
+        let y0 = dst.y;
+        let x1 = dst.x + dst.w;
+        let y1 = dst.y + dst.h;
 
         let start = self.vertices.len();
-
         let verts = [
             Vertex {
                 pos: [x0, y0],
@@ -563,6 +601,45 @@ where
             start,
             count: verts.len(),
         });
+    }
+
+    pub fn ortho_projection(&self) -> Mat4 {
+        let w = self.surface_config.width as f32;
+        let h = self.surface_config.height as f32;
+
+        Mat4::from_cols(
+            glam::vec4(2.0 / w, 0.0, 0.0, 0.0),
+            glam::vec4(0.0, -2.0 / h, 0.0, 0.0),
+            glam::vec4(0.0, 1.0, 0.0, 0.0),
+            glam::vec4(-1.0, 1.0, 0.0, 1.0),
+        )
+    }
+
+    pub fn set_transform_mat4(&mut self, mat: Mat4) {
+        let cols = mat.to_cols_array();
+        self.queue
+            .write_buffer(&self.transform_buffer, 0, bytemuck::cast_slice(&cols));
+    }
+
+    pub fn reset_transform(&mut self) {
+        let proj = self.ortho_projection();
+        self.set_transform_mat4(proj * Mat4::IDENTITY);
+    }
+
+    pub fn set_transform_2d_model(
+        &mut self,
+        tx: f32,
+        ty: f32,
+        rotation_radian: f32,
+        sx: f32,
+        sy: f32,
+    ) {
+        let scale = Mat4::from_scale(glam::vec3(sx, sy, 1.0));
+        let rotation = Mat4::from_rotation_z(rotation_radian);
+        let translation = Mat4::from_translation(glam::vec3(tx, ty, 0.0));
+        let model = translation * rotation * scale;
+        let projection = self.ortho_projection();
+        self.set_transform_mat4(projection * model);
     }
 
     pub fn load_texture_from_bytes(
@@ -668,36 +745,27 @@ where
 
     /// End frame: create buffers, record commands, submit, and present.
     pub fn end_frame(&mut self) -> Result<(), RendererError> {
-        //
-        //  Acquire next surface texture
-        //
+        // acquire next texture
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(e) => {
-                // Try to recover by reconfiguring
                 self.surface.configure(&self.device, &self.surface_config);
                 return Err(RendererError::Surface(format!("{:?}", e)));
             }
         };
-
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        //
-        //  Upload vertices to persistent GPU buffer
-        //
+        // ensure capacity and upload vertex data (vertices are in pixel-space)
         let needed = self.vertices.len();
         self.ensure_vertex_capacity(needed);
-
         if needed > 0 {
             self.queue
                 .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
         }
 
-        //
-        //  Begin command encoder + render pass
-        //
+        // command encoder
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -727,52 +795,43 @@ where
             depth_stencil_attachment: None,
         });
 
-        //
-        //  Bind vertex buffer
-        //
+        // Bind the transform bind group at index 0 (applies to both pipelines).
+        rpass.set_bind_group(0, &self.transform_bind_group, &[]);
+
         if !self.vertices.is_empty() {
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         }
 
-        //
-        //  Replay draw commands
-        //
         for cmd in &self.commands {
             match *cmd {
                 DrawCommand::Color { start, count } => {
-                    rpass.set_pipeline(&self.pipeline); // solid color pipeline
-
+                    rpass.set_pipeline(&self.pipeline); // color pipeline
                     let s = start as u32;
                     let e = s + count as u32;
-
                     rpass.draw(s..e, 0..1);
                 }
-
                 DrawCommand::Texture { tex, start, count } => {
-                    rpass.set_pipeline(&self.texture_pipeline); // textured pipeline
-
+                    rpass.set_pipeline(&self.texture_pipeline);
                     if let Some(texdata) = self.texture.get(&tex.0) {
-                        rpass.set_bind_group(0, &texdata.bind_group, &[]);
+                        rpass.set_bind_group(1, &texdata.bind_group, &[]);
                     } else {
-                        // Texture missing; skip draw instead of crashing
                         continue;
                     }
-
                     let s = start as u32;
                     let e = s + count as u32;
-
                     rpass.draw(s..e, 0..1);
                 }
             }
         }
 
-        drop(rpass); // drop borrow before submit
+        drop(rpass);
 
-        //
-        // Submit GPU commands + present frame
-        //
         self.queue.submit(Some(encoder.finish()));
         output.present();
+
+        // Clear CPU-side arrays for next frame
+        self.vertices.clear();
+        self.commands.clear();
 
         Ok(())
     }
@@ -1008,7 +1067,7 @@ mod tests {
 
     #[test]
     fn texture_loading_from_bytes() {
-        use image::{ImageBuffer, RgbaImage};
+        use image::RgbaImage;
 
         // Create a simple 2x2 red image
         let mut img = RgbaImage::new(2, 2);

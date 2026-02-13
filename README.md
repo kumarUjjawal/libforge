@@ -25,7 +25,6 @@
 </tr>
 </table>
 
----
 
 ## Features
 

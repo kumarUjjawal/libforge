@@ -93,6 +93,27 @@ where
         Ok(self.renderer.load_texture_from_bytes(name, bytes)?)
     }
 
+    pub fn set_transform_mat4(&mut self, mat: glam::Mat4) {
+        self.renderer.set_transform_mat4(mat);
+    }
+
+    pub fn reset_transform(&mut self) {
+        self.renderer.reset_transform();
+    }
+
+    /// Pixel-space convenience: set model transform (translation, rotation, scale)
+    pub fn set_transform_2d_model(
+        &mut self,
+        tx: f32,
+        ty: f32,
+        rotation_radian: f32,
+        sx: f32,
+        sy: f32,
+    ) {
+        self.renderer
+            .set_transform_2d_model(tx, ty, rotation_radian, sx, sy);
+    }
+
     /// Finish the frame, flush commands to GPU, and present.
     pub fn end_frame(&mut self) -> Result<(), LibforgeError> {
         self.renderer.end_frame()?;
