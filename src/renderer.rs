@@ -717,7 +717,10 @@ where
         );
         Ok(TextureId(id))
     }
-    /// Resize: reconfigure surface
+    /// Resize: reconfigure surface.
+    ///
+    /// Note: resizing changes the orthographic projection used by the transform pipeline,
+    /// so we also refresh the transform uniform to keep pixel-space drawing correct.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -725,6 +728,9 @@ where
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+
+        // Keep the default transform in sync with the new surface size.
+        self.reset_transform();
     }
 
     /// End frame: create buffers, record commands, submit, and present.

@@ -120,7 +120,10 @@ where
         Ok(())
     }
 
-    /// Handle window resize: pass the new logical size in pixels
+    /// Handle window resize: pass the new logical size in pixels.
+    ///
+    /// Note: resizing updates the transform pipeline's projection. If you are using a custom
+    /// transform (via `set_transform_mat4` / `set_transform_2d_model`), call it again after resize.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.renderer.resize(width, height);
     }

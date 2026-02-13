@@ -123,8 +123,6 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if let Some(ctx) = &mut self.ctx {
                     ctx.resize(size.width, size.height);
-                    // Resize changes the projection, so update the transform uniform.
-                    ctx.reset_transform();
                     self.width = size.width as f32;
                     self.height = size.height as f32;
                     if let Some(window) = &self.window {
