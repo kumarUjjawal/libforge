@@ -81,6 +81,43 @@ pub struct Texture {
     pub height: u32,
 }
 
+fn ortho_projection_for_size(width: u32, height: u32) -> Mat4 {
+    let w = width as f32;
+    let h = height as f32;
+
+    Mat4::from_cols(
+        glam::vec4(2.0 / w, 0.0, 0.0, 0.0),
+        glam::vec4(0.0, -2.0 / h, 0.0, 0.0),
+        glam::vec4(0.0, 1.0, 0.0, 0.0),
+        glam::vec4(-1.0, 1.0, 0.0, 1.0),
+    )
+}
+
+fn current_view_matrix(camera_stack: &[Camera2D]) -> Mat4 {
+    camera_stack
+        .last()
+        .map(|c| c.view_matrix())
+        .unwrap_or(Mat4::IDENTITY)
+}
+
+fn viewproj_for_size_and_camera_stack(width: u32, height: u32, camera_stack: &[Camera2D]) -> Mat4 {
+    let proj = ortho_projection_for_size(width, height);
+    let view = current_view_matrix(camera_stack);
+    proj * view
+}
+
+fn model_translate(top: &mut Mat4, tx: f32, ty: f32) {
+    *top *= Mat4::from_translation(glam::vec3(tx, ty, 0.0));
+}
+
+fn model_rotate_z(top: &mut Mat4, radians: f32) {
+    *top *= Mat4::from_rotation_z(radians);
+}
+
+fn model_scale(top: &mut Mat4, sx: f32, sy: f32) {
+    *top *= Mat4::from_scale(glam::vec3(sx, sy, 1.0));
+}
+
 impl<W> Renderer<W>
 where
     W: HasWindowHandle + HasDisplayHandle + wgpu::WasmNotSendSync + Sync + Clone + 'static,
@@ -366,14 +403,9 @@ where
     }
 
     pub fn ortho_projection(&self) -> Mat4 {
-        let w = self.gpu.surface_config.width as f32;
-        let h = self.gpu.surface_config.height as f32;
-
-        Mat4::from_cols(
-            glam::vec4(2.0 / w, 0.0, 0.0, 0.0),
-            glam::vec4(0.0, -2.0 / h, 0.0, 0.0),
-            glam::vec4(0.0, 1.0, 0.0, 0.0),
-            glam::vec4(-1.0, 1.0, 0.0, 1.0),
+        ortho_projection_for_size(
+            self.gpu.surface_config.width,
+            self.gpu.surface_config.height,
         )
     }
 
@@ -381,17 +413,13 @@ where
         self.gpu.write_transform(mat);
     }
 
-    fn current_view_matrix(&self) -> Mat4 {
-        self.camera_stack
-            .last()
-            .map(|c| c.view_matrix())
-            .unwrap_or(Mat4::IDENTITY)
-    }
-
     fn update_viewproj_transform(&mut self) {
-        let proj = self.ortho_projection();
-        let view = self.current_view_matrix();
-        self.set_transform_mat4(proj * view);
+        let mat = viewproj_for_size_and_camera_stack(
+            self.gpu.surface_config.width,
+            self.gpu.surface_config.height,
+            &self.camera_stack,
+        );
+        self.set_transform_mat4(mat);
     }
 
     /// Begin 2D camera mode (world-space). Camera only applies until `end_mode_2d()`.
@@ -425,23 +453,20 @@ where
     }
 
     pub fn translate(&mut self, tx: f32, ty: f32) {
-        let t = Mat4::from_translation(glam::vec3(tx, ty, 0.0));
         if let Some(top) = self.model_stack.last_mut() {
-            *top *= t;
+            model_translate(top, tx, ty);
         }
     }
 
     pub fn rotate_z(&mut self, radians: f32) {
-        let r = Mat4::from_rotation_z(radians);
         if let Some(top) = self.model_stack.last_mut() {
-            *top *= r;
+            model_rotate_z(top, radians);
         }
     }
 
     pub fn scale(&mut self, sx: f32, sy: f32) {
-        let s = Mat4::from_scale(glam::vec3(sx, sy, 1.0));
         if let Some(top) = self.model_stack.last_mut() {
-            *top *= s;
+            model_scale(top, sx, sy);
         }
     }
 
@@ -684,6 +709,87 @@ mod tests {
 
         // Verify first pixel is red
         assert_eq!(rgba.get_pixel(0, 0).0, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn model_stack_translate_affects_vertex_positions() {
+        // model matrix should transform CPU-side vertex positions.
+        let mut top = Mat4::IDENTITY;
+        model_translate(&mut top, 10.0, 20.0);
+
+        let p = [1.0f32, 2.0f32];
+        let out = super::transform_pos2(top, p);
+        assert!((out[0] - 11.0).abs() < 1e-6);
+        assert!((out[1] - 22.0).abs() < 1e-6);
+
+        // push/pop semantics: copying top then modifying should not affect original.
+        let original = top;
+        let mut pushed = original;
+        model_translate(&mut pushed, 5.0, 0.0);
+        let out2 = super::transform_pos2(pushed, p);
+        assert!((out2[0] - 16.0).abs() < 1e-6);
+        assert!((out2[1] - 22.0).abs() < 1e-6);
+
+        let out_original = super::transform_pos2(original, p);
+        assert!((out_original[0] - 11.0).abs() < 1e-6);
+        assert!((out_original[1] - 22.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn begin_mode_2d_changes_viewproj_matrix() {
+        let w = 800u32;
+        let h = 600u32;
+
+        let screen = viewproj_for_size_and_camera_stack(w, h, &[]);
+
+        let mut stack = vec![Camera2D {
+            x: 100.0,
+            y: 50.0,
+            rotation: 0.0,
+            zoom: 1.0,
+        }];
+        let world = viewproj_for_size_and_camera_stack(w, h, &stack);
+
+        assert_ne!(screen.to_cols_array(), world.to_cols_array());
+
+        // With a translated camera, the view matrix includes a negative translation.
+        // Verify at least one translation component differs.
+        assert_ne!(screen.w_axis.x, world.w_axis.x);
+        assert_ne!(screen.w_axis.y, world.w_axis.y);
+
+        // EndMode2D pops -> should return to screen-space
+        stack.clear();
+        let back = viewproj_for_size_and_camera_stack(w, h, &stack);
+        assert_eq!(screen.to_cols_array(), back.to_cols_array());
+    }
+
+    #[test]
+    fn resize_updates_projection_and_preserves_camera_mode() {
+        let mut stack = vec![Camera2D {
+            x: 10.0,
+            y: 20.0,
+            rotation: 0.0,
+            zoom: 1.0,
+        }];
+
+        let m1 = viewproj_for_size_and_camera_stack(800, 600, &stack);
+        let m2 = viewproj_for_size_and_camera_stack(1024, 768, &stack);
+
+        // Projection depends on width/height, so matrix must change on resize.
+        assert_ne!(m1.to_cols_array(), m2.to_cols_array());
+
+        // Camera translation should still influence the resulting matrix in both sizes.
+        let screen1 = viewproj_for_size_and_camera_stack(800, 600, &[]);
+        let screen2 = viewproj_for_size_and_camera_stack(1024, 768, &[]);
+        assert_ne!(m1.w_axis.x, screen1.w_axis.x);
+        assert_ne!(m2.w_axis.x, screen2.w_axis.x);
+
+        // If we pop the camera stack, we should exactly match screen matrices.
+        stack.clear();
+        let back1 = viewproj_for_size_and_camera_stack(800, 600, &stack);
+        let back2 = viewproj_for_size_and_camera_stack(1024, 768, &stack);
+        assert_eq!(back1.to_cols_array(), screen1.to_cols_array());
+        assert_eq!(back2.to_cols_array(), screen2.to_cols_array());
     }
 
     #[test]
