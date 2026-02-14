@@ -3,8 +3,13 @@ use crate::error::RendererError;
 use crate::vertex::Vertex;
 use glam::Mat4;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::f32::consts::PI;
-use wgpu::util::DeviceExt;
+mod geometry;
+mod gpu;
+
+use gpu::RendererGpu;
+
+// Re-export internal geometry helpers for use by unit tests and other crate modules.
+pub(crate) use geometry::{circle_to_vertices, line_to_quad, quad_to_vertices};
 
 fn transform_pos2(mat: Mat4, p: [f32; 2]) -> [f32; 2] {
     let v = mat * glam::vec4(p[0], p[1], 0.0, 1.0);
@@ -30,23 +35,11 @@ fn transform_vertices_in_place(mat: Mat4, verts: &mut [Vertex]) {
 /// an owned clone of `window`, which allows us to store the surface as `'static`.
 pub struct Renderer<W> {
     // wgpu objects
-    // These fields are kept to ensure the underlying windowing resources outlive the surface.
-    // (And they may be useful later for advanced features / diagnostics.)
-    _window: W,
-    _instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
-    _adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface_config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    gpu: RendererGpu<W>,
 
     // per-frame collected vertices
     vertices: Vec<Vertex>,
 
-    vertex_buffer: wgpu::Buffer,
-    // number of vertices capacity
-    vertex_capacity: usize,
     // current clear color stored in begin_frame
     clear_color: Option<[f32; 4]>,
 
@@ -56,18 +49,6 @@ pub struct Renderer<W> {
     // texture manager
     pub texture: std::collections::HashMap<u32, Texture>,
     pub next_texture_id: u32,
-
-    // bind group layout
-    pub tex_bind_group_layout: wgpu::BindGroupLayout,
-
-    // pipeline
-    pub texture_pipeline: wgpu::RenderPipeline,
-
-    pub transform_bind_group_layout: wgpu::BindGroupLayout,
-
-    pub transform_buffer: wgpu::Buffer,
-
-    pub transform_bind_group: wgpu::BindGroup,
 
     // Scoped 2D camera mode: active only between begin_mode_2d/end_mode_2d.
     camera_stack: Vec<Camera2D>,
@@ -106,242 +87,15 @@ where
 {
     /// Async init for the renderer
     pub async fn new(window: W) -> Result<Self, RendererError> {
-        let backends = wgpu::Backends::all();
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends,
-            ..Default::default()
-        });
-
-        // Creating a surface ties it to the lifetime of the underlying windowing resources.
-        // We create the surface from an owned clone (e.g. `Arc<Window>`) so the surface can be stored
-        // with a `'static` lifetime while `self.window` keeps the resources alive.
-        let surface = instance
-            .create_surface(window.clone())
-            .map_err(|_| RendererError::Surface("failed to create surface".into()))?;
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .map_err(|_| RendererError::Surface("no suitable adapter".into()))?;
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("libforge_device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            })
-            .await?;
-
-        let transform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("transform_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new((16 * std::mem::size_of::<f32>()) as u64)
-                                .unwrap(),
-                        ),
-                    },
-                    count: None,
-                }],
-            });
-
-        let identity = Mat4::IDENTITY;
-        let identity_cols = identity.to_cols_array();
-
-        let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("transform_buffer"),
-            contents: bytemuck::cast_slice(&identity_cols),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("transform_bind_group"),
-            layout: &transform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: transform_buffer.as_entire_binding(),
-            }],
-        });
-
-        let initial_capacity = 4096;
-
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("libforge_vertex_buffer"),
-            size: (initial_capacity * std::mem::size_of::<Vertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Choose a surface format
-        let caps = surface.get_capabilities(&adapter);
-        let surface_format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| {
-                matches!(
-                    f,
-                    wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Bgra8UnormSrgb
-                )
-            })
-            .unwrap_or(caps.formats[0]);
-
-        // default size: 800x600
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: 800,
-            height: 600,
-            present_mode: caps.present_modes[0],
-            alpha_mode: caps.alpha_modes[0],
-            desired_maximum_frame_latency: 2,
-            view_formats: vec![],
-        };
-        surface.configure(&device, &surface_config);
-
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("basic_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/basic.wgsl").into()),
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline_layout"),
-            bind_group_layouts: &[&transform_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("basic_pipeline"),
-            layout: Some(&pipeline_layout),
-            cache: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_color"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
-
-        // create texture bind group layout: binding 0 = texture, binding 1 = sampler
-        let tex_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture_bind_group_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        // Create a pipeline layout that includes the tex bind group layout
-        let texture_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("texture_pipeline_layout"),
-                bind_group_layouts: &[&transform_bind_group_layout, &tex_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        // re-use the same shader module but provide a different fragment entry point (see WGSL below)
-        let texture_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("texture_pipeline"),
-            layout: Some(&texture_pipeline_layout),
-            cache: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_texture"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        let gpu = RendererGpu::new(window).await?;
 
         let mut renderer = Self {
-            _window: window,
-            _instance: instance,
-            surface,
-            _adapter: adapter,
-            device,
-            queue,
-            surface_config,
-            pipeline,
+            gpu,
             vertices: Vec::with_capacity(1024),
-            vertex_buffer,
             clear_color: None,
-            vertex_capacity: initial_capacity,
             texture: std::collections::HashMap::new(),
             next_texture_id: 0,
-            tex_bind_group_layout,
             commands: Vec::new(),
-            texture_pipeline,
-            transform_bind_group_layout,
-            transform_buffer,
-            transform_bind_group,
             camera_stack: Vec::new(),
             model_stack: vec![Mat4::IDENTITY],
         };
@@ -353,21 +107,7 @@ where
     }
 
     pub fn ensure_vertex_capacity(&mut self, needed: usize) {
-        if needed <= self.vertex_capacity {
-            return;
-        }
-
-        let new_capacity = needed.next_power_of_two();
-        let new_size = (new_capacity * std::mem::size_of::<Vertex>()) as u64;
-
-        self.vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("libforge_vertex_buffer"),
-            size: new_size,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        self.vertex_capacity = new_capacity;
+        self.gpu.ensure_vertex_capacity(needed);
     }
 
     /// Called each frame to reset the command list and optionally set clear color
@@ -454,9 +194,7 @@ where
 
         // ensure capacity
         let needed_total = self.vertices.len() + verts.len();
-        if needed_total > self.vertex_capacity {
-            self.ensure_vertex_capacity(needed_total);
-        }
+        self.ensure_vertex_capacity(needed_total);
 
         let start = self.vertices.len();
         self.vertices.extend_from_slice(&verts);
@@ -478,9 +216,7 @@ where
 
         // ensure capacity
         let needed_total = self.vertices.len() + verts.len();
-        if needed_total > self.vertex_capacity {
-            self.ensure_vertex_capacity(needed_total);
-        }
+        self.ensure_vertex_capacity(needed_total);
 
         let start = self.vertices.len();
         self.vertices.extend_from_slice(&verts);
@@ -630,8 +366,8 @@ where
     }
 
     pub fn ortho_projection(&self) -> Mat4 {
-        let w = self.surface_config.width as f32;
-        let h = self.surface_config.height as f32;
+        let w = self.gpu.surface_config.width as f32;
+        let h = self.gpu.surface_config.height as f32;
 
         Mat4::from_cols(
             glam::vec4(2.0 / w, 0.0, 0.0, 0.0),
@@ -642,9 +378,7 @@ where
     }
 
     fn set_transform_mat4(&mut self, mat: Mat4) {
-        let cols = mat.to_cols_array();
-        self.queue
-            .write_buffer(&self.transform_buffer, 0, bytemuck::cast_slice(&cols));
+        self.gpu.write_transform(mat);
     }
 
     fn current_view_matrix(&self) -> Mat4 {
@@ -731,7 +465,7 @@ where
             depth_or_array_layers: 1,
         };
 
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+        let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(name),
             size,
             mip_level_count: 1,
@@ -743,7 +477,7 @@ where
         });
 
         // upload data
-        self.queue.write_texture(
+        self.gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
@@ -760,7 +494,7 @@ where
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = self.gpu.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("libforge_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -772,8 +506,11 @@ where
         });
 
         // create bind group
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.tex_bind_group_layout,
+        let bind_group = self.gpu.create_texture_bind_group(&view, &sampler);
+
+        /*
+        let bind_group = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.gpu.tex_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -786,6 +523,7 @@ where
             ],
             label: Some("texture_bind_group"),
         });
+        */
 
         let id = {
             let id = self.next_texture_id;
@@ -811,102 +549,21 @@ where
     /// Note: resizing changes the orthographic projection used by the transform pipeline,
     /// so we also refresh the transform uniform to keep pixel-space drawing correct.
     pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-        self.surface_config.width = width;
-        self.surface_config.height = height;
-        self.surface.configure(&self.device, &self.surface_config);
+        self.gpu.resize(width, height);
 
         // Keep the default transform in sync with the new surface size.
         self.update_viewproj_transform();
     }
 
-    /// End frame: create buffers, record commands, submit, and present.
+    /// End frame: submit draw commands to the GPU and present.
     pub fn end_frame(&mut self) -> Result<(), RendererError> {
-        // acquire next texture
-        let output = match self.surface.get_current_texture() {
-            Ok(t) => t,
-            Err(e) => {
-                self.surface.configure(&self.device, &self.surface_config);
-                return Err(RendererError::Surface(format!("{:?}", e)));
-            }
-        };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        // ensure capacity and upload vertex data (vertices are in pixel-space)
-        let needed = self.vertices.len();
-        self.ensure_vertex_capacity(needed);
-        if needed > 0 {
-            self.queue
-                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
-        }
-
-        // command encoder
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("command_encoder"),
-            });
-
-        let clear = self.clear_color.unwrap_or([0.1, 0.1, 0.1, 1.0]);
-
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("render_pass"),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: clear[0] as f64,
-                        g: clear[1] as f64,
-                        b: clear[2] as f64,
-                        a: clear[3] as f64,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-        });
-
-        // Bind the transform bind group at index 0 (applies to both pipelines).
-        rpass.set_bind_group(0, &self.transform_bind_group, &[]);
-
-        if !self.vertices.is_empty() {
-            rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        }
-
-        for cmd in &self.commands {
-            match *cmd {
-                DrawCommand::Color { start, count } => {
-                    rpass.set_pipeline(&self.pipeline); // color pipeline
-                    let s = start as u32;
-                    let e = s + count as u32;
-                    rpass.draw(s..e, 0..1);
-                }
-                DrawCommand::Texture { tex, start, count } => {
-                    rpass.set_pipeline(&self.texture_pipeline);
-                    if let Some(texdata) = self.texture.get(&tex.0) {
-                        rpass.set_bind_group(1, &texdata.bind_group, &[]);
-                    } else {
-                        continue;
-                    }
-                    let s = start as u32;
-                    let e = s + count as u32;
-                    rpass.draw(s..e, 0..1);
-                }
-            }
-        }
-
-        drop(rpass);
-
-        self.queue.submit(Some(encoder.finish()));
-        output.present();
+        // Delegate GPU submission.
+        self.gpu.end_frame(
+            &self.vertices,
+            &self.commands,
+            self.clear_color,
+            &self.texture,
+        )?;
 
         // Clear CPU-side arrays for next frame
         self.vertices.clear();
@@ -934,118 +591,6 @@ pub(crate) fn rect_to_ndc_coords(rect: crate::Rect, width: u32, height: u32) -> 
         x1, y1, // BR
         x0, y1, // BL
     ]
-}
-
-// helper: convert a line (x1,y1)-(x2,y2) and thickness into a quad (4 points)
-// Returns points in CCW order: [top-left, top-right, bottom-right, bottom-left]
-pub(crate) fn line_to_quad(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32) -> [[f32; 2]; 4] {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len = (dx * dx + dy * dy).sqrt().max(1e-6); // avoid div by zero
-    let ux = dx / len;
-    let uy = dy / len;
-
-    // perpendicular (pointing "up" relative to line direction)
-    let px = -uy;
-    let py = ux;
-
-    let half = thickness * 0.5;
-    let ox = px * half;
-    let oy = py * half;
-
-    // top-left  = p1 + perp
-    // top-right = p2 + perp
-    // bottom-right = p2 - perp
-    // bottom-left  = p1 - perp
-    [
-        [x1 + ox, y1 + oy], // tl
-        [x2 + ox, y2 + oy], // tr
-        [x2 - ox, y2 - oy], // br
-        [x1 - ox, y1 - oy], // bl
-    ]
-}
-
-// helper: convert quad corners into 6 vertices (two triangles).
-// uv is unused for colored geometry so set to 0.0
-pub(crate) fn quad_to_vertices(quad: [[f32; 2]; 4], color: [f32; 4]) -> Vec<Vertex> {
-    let p0 = quad[0];
-    let p1 = quad[1];
-    let p2 = quad[2];
-    let p3 = quad[3];
-
-    vec![
-        Vertex {
-            pos: [p0[0], p0[1]],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [p1[0], p1[1]],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [p2[0], p2[1]],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [p0[0], p0[1]],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [p2[0], p2[1]],
-            uv: [0.0, 0.0],
-            color,
-        },
-        Vertex {
-            pos: [p3[0], p3[1]],
-            uv: [0.0, 0.0],
-            color,
-        },
-    ]
-}
-
-// helper: build a triangle-fan circle in pixel-space
-// returns Vec<Vertex> with triangles (center, p_i, p_i+1)
-pub(crate) fn circle_to_vertices(
-    cx: f32,
-    cy: f32,
-    radius: f32,
-    segments: usize,
-    color: [f32; 4],
-) -> Vec<Vertex> {
-    let mut verts = Vec::with_capacity(segments * 3);
-    let step = 2.0 * PI / (segments as f32);
-
-    for i in 0..segments {
-        let a0 = (i as f32) * step;
-        let a1 = ((i + 1) as f32) * step;
-        let x0 = cx + a0.cos() * radius;
-        let y0 = cy + a0.sin() * radius;
-        let x1 = cx + a1.cos() * radius;
-        let y1 = cy + a1.sin() * radius;
-
-        // triangle (center, p0, p1)
-        verts.push(Vertex {
-            pos: [cx, cy],
-            uv: [0.0, 0.0],
-            color,
-        });
-        verts.push(Vertex {
-            pos: [x0, y0],
-            uv: [0.0, 0.0],
-            color,
-        });
-        verts.push(Vertex {
-            pos: [x1, y1],
-            uv: [0.0, 0.0],
-            color,
-        });
-    }
-
-    verts
 }
 
 #[cfg(test)]

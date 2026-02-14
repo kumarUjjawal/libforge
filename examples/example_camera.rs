@@ -166,10 +166,10 @@ impl ApplicationHandler for App {
                     || self.zoom_in
                     || self.zoom_out;
 
-                if any_input {
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
+                if any_input
+                    && let Some(window) = &self.window
+                {
+                    window.request_redraw();
                 }
             }
             _ => {}
