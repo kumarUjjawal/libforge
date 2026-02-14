@@ -1,5 +1,11 @@
 use glam::Mat4;
 
+/// A 2D camera for world-space rendering.
+///
+/// Use with `begin_mode_2d(camera)` to enter world-space drawing mode.
+/// - `x, y`: camera position (world units)
+/// - `rotation`: rotation in radians (positive = counter-clockwise)
+/// - `zoom`: scale factor (values > 1.0 zoom out, < 1.0 zoom in)
 #[derive(Clone, Copy, Debug)]
 pub struct Camera2D {
     pub x: f32,

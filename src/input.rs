@@ -3,6 +3,9 @@ use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
+/// Keyboard keys supported by the input system.
+///
+/// Uses physical key codes (layout-independent).
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Key {
     Left,
@@ -45,6 +48,7 @@ impl Key {
     }
 }
 
+/// Mouse buttons.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum MouseButton {
     Left,
