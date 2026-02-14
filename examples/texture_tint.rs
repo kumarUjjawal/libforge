@@ -53,7 +53,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(ctx) = &mut self.ctx
                     && let Some(tex) = self.texture {
-                        ctx.begin_frame(Some(Color([0.05, 0.05, 0.1, 1.0])));
+                        ctx.clear_background(Color([0.05, 0.05, 0.1, 1.0]));
 
                         // Draw the same texture 9 times in a 3x3 grid with different tints
                         let size = 280.0;

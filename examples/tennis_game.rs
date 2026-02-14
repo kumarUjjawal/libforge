@@ -247,7 +247,7 @@ impl TennisGame {
     }
 
     fn render(&self, ctx: &mut LibContext<Arc<Window>>) {
-        ctx.begin_frame(Some(Color([0.15, 0.5, 0.2, 1.0]))); // green court
+        ctx.clear_background(Color([0.15, 0.5, 0.2, 1.0])); // green court
 
         // Draw court markings
         self.draw_court(ctx);

@@ -63,7 +63,7 @@ impl ApplicationHandler for App {
                     // Increase time
                     self.time += 1.0 / 60.0;
 
-                    ctx.begin_frame(Some(Color([0.12, 0.12, 0.15, 1.0])));
+                    ctx.clear_background(Color([0.12, 0.12, 0.15, 1.0]));
 
                     // Draw animated sprite
                     ctx.draw_sprite_animation(

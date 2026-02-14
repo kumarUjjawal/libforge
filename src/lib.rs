@@ -1,16 +1,19 @@
 pub mod camera;
 pub mod error;
+mod input;
 pub mod renderer;
 pub mod sprite_animation;
 pub mod vertex;
 
 pub use crate::camera::Camera2D;
 pub use crate::renderer::TextureId;
-
 use crate::sprite_animation::SpriteAnimation;
+
 use error::LibforgeError;
+pub use input::{Key, MouseButton};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use renderer::Renderer;
+use std::time::Instant;
 
 /// Simple RGBA color
 #[derive(Clone, Copy, Debug)]
@@ -33,6 +36,9 @@ pub struct Rect {
 /// Public immediate-mode context
 pub struct LibContext<W> {
     renderer: Renderer<W>,
+    input: input::InputState,
+    last_frame_instant: Instant,
+    frame_dt: f32,
 }
 
 impl<W> LibContext<W>
@@ -44,10 +50,96 @@ where
     /// In examples, this is typically a `winit::window::Window` wrapped in an `Arc`.
     pub fn new_from_window(window: W) -> Result<Self, LibforgeError> {
         let renderer = pollster::block_on(Renderer::new(window))?;
-        Ok(LibContext { renderer })
+        Ok(LibContext {
+            renderer,
+            input: input::InputState::default(),
+            last_frame_instant: Instant::now(),
+            frame_dt: 1.0 / 60.0,
+        })
+    }
+
+    /// Call once per frame before any draw calls
+    pub fn begin_drawing(&mut self) {
+        let now = Instant::now();
+        self.frame_dt = (now - self.last_frame_instant).as_secs_f32();
+        self.last_frame_instant = now;
+
+        self.input.begin_frame();
+
+        // Start a frame with no implicit clear.
+        self.renderer.begin_frame(None);
+    }
+
+    pub fn end_drawing(&mut self) -> Result<(), crate::error::RendererError> {
+        self.renderer.end_frame()
+    }
+
+    pub fn frame_time(&self) -> f32 {
+        self.frame_dt
+    }
+
+    pub fn fps(&self) -> f32 {
+        if self.frame_dt > 0.0 {
+            1.0 / self.frame_dt
+        } else {
+            0.0
+        }
+    }
+
+    pub fn handle_window_event(&mut self, event: &winit::event::WindowEvent) {
+        use winit::event::WindowEvent;
+
+        match event {
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.input
+                    .handle_keyboard_input(event.physical_key, event.state);
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.handle_cursor_moved(*position);
+            }
+            WindowEvent::MouseInput { button, state, .. } => {
+                self.input.handle_mouse_button(*button, *state);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.input.handle_mouse_wheel(*delta);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn is_key_down(&self, key: Key) -> bool {
+        self.input.is_key_down(key)
+    }
+
+    pub fn is_key_pressed(&self, key: Key) -> bool {
+        self.input.is_key_pressed(key)
+    }
+
+    pub fn is_mouse_button_down(&self, btn: MouseButton) -> bool {
+        self.input.is_mouse_button_down(btn)
+    }
+
+    pub fn is_mouse_button_pressed(&self, btn: MouseButton) -> bool {
+        self.input.is_mouse_button_pressed(btn)
+    }
+
+    pub fn mouse_position(&self) -> (f32, f32) {
+        self.input.mouse_position()
+    }
+
+    pub fn mouse_wheel(&self) -> (f32, f32) {
+        self.input.mouse_wheel()
+    }
+
+    /// Clear the screen to a solid color. Call after `begin_drawing()` and before any draw calls.
+    pub fn clear_background(&mut self, color: Color) {
+        self.renderer.begin_frame(Some(color.0));
     }
 
     /// Must be called at the start of each frame. Optional clear color.
+    /// 
+    /// **Deprecated:** prefer `begin_drawing()` + `clear_background(color)` for clarity.
+    #[deprecated(since = "0.1.0", note = "use `begin_drawing()` + `clear_background(color)` instead")]
     pub fn begin_frame(&mut self, clear: Option<Color>) {
         self.renderer.begin_frame(clear.map(|c| c.0));
     }

@@ -44,7 +44,7 @@ impl ApplicationHandler for App {
                 if let Some(ctx) = &mut self.ctx {
                     let tex = self.sheet.unwrap();
 
-                    ctx.begin_frame(Some(Color([0.15, 0.15, 0.2, 1.0])));
+                    ctx.clear_background(Color([0.15, 0.15, 0.2, 1.0]));
 
                     // Draw the full texture first (scaled down) to verify it loads
                     ctx.draw_texture(

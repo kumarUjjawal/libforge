@@ -46,7 +46,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(ctx) = &mut self.ctx {
                     // Immediate-mode usage
-                    ctx.begin_frame(Some(Color([0.2, 0.25, 0.3, 1.0])));
+                    ctx.clear_background(Color([0.2, 0.25, 0.3, 1.0]));
                     // Draw some rectangles
                     ctx.draw_rect(
                         Rect {

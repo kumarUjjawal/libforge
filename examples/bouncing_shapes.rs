@@ -133,7 +133,7 @@ impl ApplicationHandler for App {
                 self.update(1.0 / 60.0); // ~60 FPS
 
                 if let Some(ctx) = &mut self.ctx {
-                    ctx.begin_frame(Some(Color([0.15, 0.15, 0.2, 1.0])));
+                    ctx.clear_background(Color([0.15, 0.15, 0.2, 1.0]));
 
                     // Draw border rectangle
                     ctx.draw_rect(

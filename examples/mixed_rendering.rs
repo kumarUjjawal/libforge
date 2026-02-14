@@ -53,7 +53,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(ctx) = &mut self.ctx
                     && let Some(tex) = self.texture {
-                        ctx.begin_frame(Some(Color([0.12, 0.12, 0.18, 1.0])));
+                        ctx.clear_background(Color([0.12, 0.12, 0.18, 1.0]));
 
                         // Draw textured background
                         ctx.draw_texture(

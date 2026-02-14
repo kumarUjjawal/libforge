@@ -54,7 +54,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(ctx) = &mut self.ctx
                     && let Some(tex) = self.texture {
-                        ctx.begin_frame(Some(Color([0.1, 0.1, 0.15, 1.0])));
+                        ctx.clear_background(Color([0.1, 0.1, 0.15, 1.0]));
 
                         // Draw texture filling most of the window
                         ctx.draw_texture(

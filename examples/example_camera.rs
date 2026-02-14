@@ -120,7 +120,7 @@ impl ApplicationHandler for App {
                 }
 
                 // Draw
-                ctx.begin_frame(Some(Color([0.06, 0.06, 0.08, 1.0])));
+                ctx.clear_background(Color([0.06, 0.06, 0.08, 1.0]));
 
                 // World-space drawing under a scoped 2D camera mode.
                 ctx.begin_mode_2d(self.camera);
